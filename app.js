@@ -1485,7 +1485,7 @@
     }
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
+  function init() {
     root = document.getElementById("root");
     toastRoot = document.getElementById("toast-root");
     root.addEventListener("click", handleClick);
@@ -1493,5 +1493,11 @@
     root.addEventListener("keydown", handleKeydown);
     loadState();
     render();
-  });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
