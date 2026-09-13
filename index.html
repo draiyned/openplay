@@ -1,18 +1,38 @@
- <!DOCTYPE html> 
-  <html lang="en"> 
-  <head> 
-  <meta charset="UTF-8" /> 
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" /> 
-  <title>Open Play Generator — By draiyned</title> 
-  <link rel="stylesheet" href="style.css" /> 
-  </head> 
-  <body> 
-  <div id="root"></div> 
-  <div id="toast-root" aria-live="polite"></div> 
-  <script src="app.js"></script> 
- <script> 
-   window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); }; 
- </script> 
- <script defer src="/_vercel/insights/script.js"></script> 
-  </body> 
-  </html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Open Play Generator — By draiyned</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="gate-overlay">
+  <form id="gate-form">
+    <h1>Enter Password</h1>
+    <input type="password" id="gate-input" autocomplete="off" autofocus />
+    <button type="submit">Unlock</button>
+    <p id="gate-error">Incorrect password.</p>
+  </form>
+</div>
+
+<div id="root" style="display:none"></div>
+<div id="toast-root" aria-live="polite"></div>
+
+<script>
+(function () {
+  var GATE_PASSWORD = "secret";
+  var SESSION_KEY = "gate-unlocked";
+
+  var overlay = document.getElementById("gate-overlay");
+  var form = document.getElementById("gate-form");
+  var input = document.getElementById("gate-input");
+  var error = document.getElementById("gate-error");
+  var root = document.getElementById("root");
+
+  function unlock() {
+    overlay.style.display = "none";
+    root.style.display = "";
+    var script = document.createElement("script");
+    script.src = "app.js";
