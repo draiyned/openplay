@@ -36,3 +36,35 @@
     root.style.display = "";
     var script = document.createElement("script");
     script.src = "app.js";
+    document.body.appendChild(script);
+  }
+
+  try {
+    if (sessionStorage.getItem(SESSION_KEY) === "yes") {
+      unlock();
+    }
+  } catch (e) {
+    // sessionStorage unavailable (e.g. some file:// or privacy modes) -- gate stays up
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (input.value === GATE_PASSWORD) {
+      error.style.display = "none";
+      try {
+        sessionStorage.setItem(SESSION_KEY, "yes");
+      } catch (e) {
+        // ignore if storage isn't available
+      }
+      unlock();
+    } else {
+      error.style.display = "block";
+      input.value = "";
+      input.focus();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
