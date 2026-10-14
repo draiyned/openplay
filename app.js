@@ -42,7 +42,6 @@
     nameInput: "",
     lockedPairs: [],
     pendingLockId: null,
-    lastFinish: null,
     bulkAddOpen: false,
     bulkAddText: "",
   };
@@ -419,6 +418,68 @@
     return { four: four, split: bestTeamSplit(four, ph, oh, recent, recentOpp) };
   }
 
+  /* ---------- undo ---------- */
+  // Every action that changes players, courts, matches or ratings snapshots
+  // the relevant state first, so the Undo button can step back through them.
+  var UNDO_FIELDS = [
+    "players", "numCourts", "sessionStarted", "courts", "matchCounts",
+    "gamesPlayed", "benchOrder", "turnCounter", "partnerHistory",
+    "opponentHistory", "recentPartners", "recentOpponents", "lockedPairs",
+    "benched", "history",
+  ];
+  var UNDO_LIMIT = 50;
+  var undoStack = [];
+  var undoSeq = 0;
+  var MIN_COURTS = 1;
+  var MAX_COURTS = 20;
+
+  function snapshotState() {
+    var o = {};
+    UNDO_FIELDS.forEach(function (k) { o[k] = state[k]; });
+    return JSON.parse(JSON.stringify(o));
+  }
+
+  function pushUndo(label, snap) {
+    undoSeq += 1;
+    undoStack.push({ id: undoSeq, label: label, snap: snap || snapshotState() });
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    return undoSeq;
+  }
+
+  // Courts and history hold the same player objects as state.players (ratings
+  // are updated in place). JSON round-trips break that sharing, so re-link by id.
+  function relinkPlayers() {
+    var byId = {};
+    state.players.forEach(function (p) { byId[p.id] = p; });
+    function fix(p) { return byId[p.id] || p; }
+    state.courts = (state.courts || []).map(function (c) {
+      return c ? { teamA: c.teamA.map(fix), teamB: c.teamB.map(fix) } : null;
+    });
+    (state.history || []).forEach(function (h) {
+      h.teamA = h.teamA.map(fix);
+      h.teamB = h.teamB.map(fix);
+    });
+  }
+
+  function undo() {
+    var entry = undoStack.pop();
+    if (!entry) return;
+    Object.keys(entry.snap).forEach(function (k) { state[k] = entry.snap[k]; });
+    relinkPlayers();
+    state.confirmState = {};
+    state.scoreDraft = {};
+    state.pendingLockId = null;
+    state.confirmEndSession = false;
+    state.error = "";
+    render();
+    showToast("Undid: " + entry.label, ICONS.rotateCcw);
+  }
+
+  function undoIfLatest(id) {
+    var top = undoStack[undoStack.length - 1];
+    if (top && top.id === id) undo();
+  }
+
   /* ---------- actions ---------- */
   function addPlayer() {
     var name = (state.nameInput || "").trim();
@@ -431,6 +492,7 @@
       render();
       return;
     }
+    pushUndo("Add " + name);
     var id = Date.now() + "-" + Math.random().toString(36).slice(2, 7);
     state.players.push({ id: id, name: name, skill: 0, rating: STARTING_RATING });
     state.gamesPlayed[id] = 0;
@@ -456,6 +518,7 @@
     var existingLower = {};
     state.players.forEach(function (p) { existingLower[p.name.toLowerCase()] = true; });
 
+    var undoSnap = snapshotState();
     var added = 0, skipped = 0;
     names.forEach(function (name) {
       var lower = name.toLowerCase();
@@ -471,6 +534,7 @@
       added++;
     });
 
+    if (added > 0) pushUndo("Add " + added + " player" + (added === 1 ? "" : "s"), undoSnap);
     state.bulkAddText = "";
     state.bulkAddOpen = false;
     state.error = "";
@@ -495,6 +559,7 @@
     var partnerId = findLockPartnerId(id);
     if (partnerId) {
       // already locked -- unlock
+      pushUndo("Unlock partners");
       state.lockedPairs = state.lockedPairs.filter(function (p) {
         return p.a !== id && p.b !== id;
       });
@@ -507,6 +572,7 @@
       state.pendingLockId = id;
     } else {
       // completing a lock with the pending player (guaranteed unlocked, see above)
+      pushUndo("Lock partners");
       state.lockedPairs.push({ a: state.pendingLockId, b: id });
       state.pendingLockId = null;
     }
@@ -516,11 +582,15 @@
   function cycleSkill(id) {
     var p = state.players.filter(function (pl) { return pl.id === id; })[0];
     if (!p) return;
+    pushUndo("Change skill: " + p.name);
     p.skill = ((p.skill || 0) + 1) % 6;
     render();
   }
 
   function removePlayer(id) {
+    var rp = state.players.filter(function (p) { return p.id === id; })[0];
+    if (!rp) return;
+    pushUndo("Remove " + rp.name);
     state.players = state.players.filter(function (p) {
       return p.id !== id;
     });
@@ -538,6 +608,7 @@
       return;
     }
     state.error = "";
+    pushUndo("Start session");
 
     var gp = Object.assign({}, state.gamesPlayed);
     var bo = Object.assign({}, state.benchOrder);
@@ -629,18 +700,7 @@
       return;
     }
 
-    var ratingSnapshot = {};
-    finished.teamA.concat(finished.teamB).forEach(function (p) {
-      ratingSnapshot[p.id] = p.rating !== undefined ? p.rating : STARTING_RATING;
-    });
-
-    state.lastFinish = {
-      ci: ci,
-      court: finished,
-      benchOrder: Object.assign({}, state.benchOrder),
-      turnCounter: state.turnCounter,
-      ratingSnapshot: ratingSnapshot,
-    };
+    var undoId = pushUndo("Finish match on court " + (ci + 1));
 
     var counter = state.turnCounter;
     finished.teamA.concat(finished.teamB).forEach(function (p) {
@@ -674,28 +734,10 @@
     delete state.scoreDraft[ci];
     state.confirmState[ci] = "confirmNext";
     render();
-    showUndoToast("Match recorded", function () { undoLastFinish(ci); });
+    showUndoToast("Match recorded", function () { undoIfLatest(undoId); });
   }
 
-  function undoLastFinish(ci) {
-    var lf = state.lastFinish;
-    if (!lf || lf.ci !== ci) return;
-    state.courts[lf.ci] = lf.court;
-    state.history.shift();
-    state.benchOrder = lf.benchOrder;
-    state.turnCounter = lf.turnCounter;
-    if (lf.ratingSnapshot) {
-      Object.keys(lf.ratingSnapshot).forEach(function (id) {
-        var p = state.players.filter(function (pl) { return pl.id === id; })[0];
-        if (p) p.rating = lf.ratingSnapshot[id];
-      });
-    }
-    delete state.confirmState[lf.ci];
-    state.lastFinish = null;
-    render();
-  }
-
-  function generateNextForCourt(ci) {
+  function generateNextForCourt(ci, skipUndo) {
     var occupied = occupiedIds(state.courts);
     var waiting = state.players.filter(function (p) {
       return !occupied[p.id] && !state.benched[p.id];
@@ -708,7 +750,7 @@
       return;
     }
 
-    if (state.lastFinish && state.lastFinish.ci === ci) state.lastFinish = null;
+    if (!skipUndo) pushUndo("Generate match on court " + (ci + 1));
 
     var gp = Object.assign({}, state.gamesPlayed);
     var ph = Object.assign({}, state.partnerHistory);
@@ -747,6 +789,8 @@
   }
 
   function toggleBench(id) {
+    var bp = state.players.filter(function (p) { return p.id === id; })[0];
+    pushUndo((state.benched[id] ? "Mark active: " : "Mark left: ") + (bp ? bp.name : ""));
     if (state.benched[id]) {
       delete state.benched[id];
     } else {
@@ -763,6 +807,7 @@
   function rerollCourt(ci) {
     var court = state.courts[ci];
     if (!court) return;
+    pushUndo("Reroll court " + (ci + 1));
     var four = court.teamA.concat(court.teamB);
     var gp = Object.assign({}, state.gamesPlayed);
     var ph = Object.assign({}, state.partnerHistory);
@@ -796,7 +841,38 @@
     state.matchCounts[ci] = Math.max(0, (state.matchCounts[ci] || 1) - 1);
     state.courts[ci] = null;
     delete state.confirmState[ci];
-    generateNextForCourt(ci);
+    generateNextForCourt(ci, true);
+  }
+
+  function changeCourts(delta) {
+    var next = state.numCourts + delta;
+    if (next < MIN_COURTS || next > MAX_COURTS) return;
+
+    if (state.sessionStarted && delta < 0) {
+      var last = state.courts.length - 1;
+      if (state.courts[last]) {
+        state.error = "Court " + (last + 1) + " has a match in progress — finish or reroll it before removing the court.";
+        render();
+        return;
+      }
+    }
+
+    pushUndo(delta > 0 ? "Add court" : "Remove court");
+    state.numCourts = next;
+    if (state.sessionStarted) {
+      if (delta > 0) {
+        state.courts.push(null);
+        state.matchCounts.push(0);
+      } else {
+        var removed = state.courts.length - 1;
+        state.courts.pop();
+        state.matchCounts.pop();
+        delete state.confirmState[removed];
+        delete state.scoreDraft[removed];
+      }
+    }
+    state.error = "";
+    render();
   }
 
   function askEndSession() {
@@ -810,6 +886,7 @@
   }
 
   function resetAll() {
+    pushUndo("End session");
     state.sessionStarted = false;
     state.courts = [];
     state.matchCounts = [];
@@ -870,6 +947,12 @@
         '<path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
         size, style
       );
+    },
+    minus: function (size, style) {
+      return icon('<line x1="5" y1="12" x2="19" y2="12"/>', size, style);
+    },
+    undo: function (size, style) {
+      return icon('<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>', size, style);
     },
     check: function (size, style) {
       return icon('<polyline points="20 6 9 17 4 12"/>', size, style);
@@ -998,9 +1081,13 @@
           ? '<div class="lock-hint">' + ICONS.link(13) + ' Tap another player\'s lock icon to pair with ' + escapeHtml(pendingPlayer.name) + '</div>'
           : "") +
         (state.players.length > 0 ? '<div class="player-chips">' + chips + '</div>' : "") +
-        '<label class="courts-label">Courts' +
-          '<input id="num-courts-input" type="number" min="1" max="20" value="' + state.numCourts + '" class="number-input"' + (state.sessionStarted ? " disabled" : "") + ' />' +
-        '</label>' +
+        '<div class="courts-label">Courts' +
+          '<div class="courts-stepper">' +
+            '<button type="button" class="stepper-btn" data-action="courts-dec" aria-label="Remove a court"' + (state.numCourts <= MIN_COURTS ? " disabled" : "") + '>' + ICONS.minus(14) + '</button>' +
+            '<span class="stepper-value" aria-live="polite">' + state.numCourts + '</span>' +
+            '<button type="button" class="stepper-btn" data-action="courts-inc" aria-label="Add a court"' + (state.numCourts >= MAX_COURTS ? " disabled" : "") + '>' + ICONS.plus(14) + '</button>' +
+          '</div>' +
+        '</div>' +
       '</div>'
     );
   }
@@ -1010,11 +1097,23 @@
     return '<div class="error-banner">' + escapeHtml(state.error) + '</div>';
   }
 
+  function buildUndoButton() {
+    var top = undoStack.length ? undoStack[undoStack.length - 1] : null;
+    return (
+      '<button type="button" class="btn-secondary btn-undo" data-action="undo"' + (top ? "" : " disabled") +
+      ' title="' + (top ? escapeHtml("Undo: " + top.label) : "Nothing to undo") + '">' +
+        ICONS.undo(14) + ' Undo' +
+        (top ? '<span class="undo-label">' + escapeHtml(top.label) + '</span>' : "") +
+      '</button>'
+    );
+  }
+
   function buildActionsRow() {
     if (!state.sessionStarted) {
       return (
         '<div class="actions-row">' +
           '<button type="button" class="btn-primary" data-action="start-session">' + ICONS.shuffle(16) + ' Start Session</button>' +
+          buildUndoButton() +
         '</div>'
       );
     }
@@ -1031,6 +1130,7 @@
     }
     return (
       '<div class="actions-row">' +
+        buildUndoButton() +
         '<button type="button" class="btn-secondary" data-action="ask-end-session">' + ICONS.rotateCcw(14) + ' End session</button>' +
       '</div>'
     );
@@ -1423,6 +1523,7 @@
       Object.keys(saved).forEach(function (key) {
         state[key] = saved[key];
       });
+      relinkPlayers();
     } catch (e) {
       // corrupted or inaccessible storage — start fresh
     }
@@ -1460,6 +1561,9 @@
     else if (action === "ask-reroll") askReroll(ci);
     else if (action === "reroll") rerollCourt(ci);
     else if (action === "download-history") downloadHistory();
+    else if (action === "undo") undo();
+    else if (action === "courts-inc") changeCourts(1);
+    else if (action === "courts-dec") changeCourts(-1);
   }
 
   function handleInput(e) {
@@ -1468,8 +1572,6 @@
       state.nameInput = t.value;
     } else if (t.id === "bulk-add-input") {
       state.bulkAddText = t.value;
-    } else if (t.id === "num-courts-input") {
-      state.numCourts = Math.max(1, parseInt(t.value, 10) || 1);
     } else if (t.dataset && t.dataset.bind === "score") {
       var ci = t.dataset.ci;
       var team = t.dataset.team;

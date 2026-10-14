@@ -1419,6 +1419,7 @@ button, input {
   margin: 0 0 8px;
 }
 
+#gate-email,
 #gate-input {
   width: 100%;
   padding: 12px 14px;
@@ -1429,6 +1430,7 @@ button, input {
   font-size: 1rem;
 }
 
+#gate-email:focus,
 #gate-input:focus {
   outline: none;
   border-color: #F5EFD9;
@@ -1455,4 +1457,47 @@ button, input {
   color: #e08585;
   font-size: 0.875rem;
   margin: 0;
+}
+
+
+/* ---------- courts stepper ---------- */
+.courts-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.stepper-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #122320;
+  border: 1px solid rgba(245, 239, 217, 0.2);
+  color: #F5EFD9;
+  cursor: pointer;
+}
+.stepper-btn:hover:not(:disabled) { border-color: rgba(245, 239, 217, 0.5); }
+.stepper-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.stepper-value {
+  min-width: 32px;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #F5EFD9;
+}
+
+/* ---------- undo button ---------- */
+.actions-row { flex-wrap: wrap; }
+.btn-undo { max-width: 100%; }
+.btn-undo:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-undo:disabled:hover { opacity: 0.35; }
+.undo-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  opacity: 0.7;
 }

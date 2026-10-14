@@ -9,9 +9,10 @@
 <body>
 
 <div id="gate-overlay">
-  <form id="gate-form">
-    <h1>Enter Password</h1>
-    <input type="password" id="gate-input" autocomplete="off" autofocus />
+  <form id="gate-form" novalidate>
+    <h1>Sign In</h1>
+    <input type="email" id="gate-email" placeholder="Email address" autocomplete="email" inputmode="email" autofocus />
+    <input type="password" id="gate-input" placeholder="Password" autocomplete="off" />
     <button type="submit">Unlock</button>
     <p id="gate-error">Incorrect password.</p>
   </form>
@@ -24,10 +25,12 @@
 (function () {
   var GATE_PASSWORD = "october2026";
   var SESSION_KEY = "gate-unlocked";
+  var EMAIL_KEY = "gate-email";
 
   var overlay = document.getElementById("gate-overlay");
   var form = document.getElementById("gate-form");
   var input = document.getElementById("gate-input");
+  var emailInput = document.getElementById("gate-email");
   var error = document.getElementById("gate-error");
   var root = document.getElementById("root");
 
@@ -49,15 +52,24 @@
 
   form.addEventListener("submit", function (e) {
     e.preventDefault();
+    var email = emailInput.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      error.textContent = "Enter a valid email address.";
+      error.style.display = "block";
+      emailInput.focus();
+      return;
+    }
     if (input.value === GATE_PASSWORD) {
       error.style.display = "none";
       try {
         sessionStorage.setItem(SESSION_KEY, "yes");
+        sessionStorage.setItem(EMAIL_KEY, email);
       } catch (e) {
         // ignore if storage isn't available
       }
       unlock();
     } else {
+      error.textContent = "Incorrect password.";
       error.style.display = "block";
       input.value = "";
       input.focus();
