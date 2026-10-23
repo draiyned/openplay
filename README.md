@@ -64,3 +64,22 @@ with their email and device ID back to `allowed`. Blocks apply at the next sign-
 **Limits:** the device ID is a random value stored in the browser. Clearing site data, private mode,
 or another browser/phone gets a new ID, so the email block is what holds those cases. Anyone can type
 someone else's email. If you edit `Code.gs` later, create a **new version** under Manage deployments.
+
+## Google sign-in (verified emails)
+With a Google client ID set, visitors tap **Sign in with Google** and the script confirms the
+sign-in with Google before logging the email, so nobody can type someone else's address.
+
+1. Go to console.cloud.google.com, create a project, then **APIs & Services → OAuth consent screen**
+   (External; app name and your email). Set the publishing status to **In production**.
+2. **Credentials → Create credentials → OAuth client ID → Web application**. Under
+   **Authorized JavaScript origins** add your site's address only (for GitHub Pages: `https://draiyned.github.io`).
+3. Copy the **Client ID** and paste it in two places: `GOOGLE_CLIENT_ID` in `index.html` and
+   `GOOGLE_CLIENT_ID` at the top of `Code.gs` in Apps Script.
+4. In Apps Script: **Deploy → Manage deployments → Edit → New version → Deploy** (approve the new permission).
+
+Google sign-in does not work when the page is opened as a local file; use the real site address.
+
+## Court timers
+Every court shows a rental clock that starts when the session starts (or when a court is added) and
+can be paused/resumed. The total across courts, in `HH:MM:SS` and court-hours, sits above the courts.
+Time from a removed court stays in the total. Ending the session clears the timers.

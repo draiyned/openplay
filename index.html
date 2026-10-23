@@ -11,8 +11,12 @@
 <div id="gate-overlay">
   <form id="gate-form" novalidate>
     <h1>Sign In</h1>
-    <input type="email" id="gate-email" placeholder="Email address" autocomplete="email" inputmode="email" autofocus />
-    <input type="password" id="gate-input" placeholder="Password" autocomplete="off" />
+    <div id="gsi-wrap" style="display:none">
+      <div id="gsi-btn"></div>
+      <p id="gsi-status"></p>
+    </div>
+    <input type="email" id="gate-email" placeholder="Enter your email address" autocomplete="email" inputmode="email" autofocus />
+    <input type="password" id="gate-input" placeholder="Enter the app password" autocomplete="off" />
     <button type="submit" id="gate-submit">Unlock</button>
     <p id="gate-error">Incorrect password.</p>
     <p id="gate-note">Your email is recorded to manage access to this tool.</p>
@@ -30,6 +34,12 @@
   // Paste your Google Apps Script web-app URL here (see README). While this
   // is left as-is, the gate skips the server check and only validates locally.
   var ACCESS_URL = "PASTE_APPS_SCRIPT_URL_HERE";
+  // Paste your Google OAuth Web client ID here (see README). While this is
+  // left as-is, the gate falls back to a typed (unverified) email.
+  var GOOGLE_CLIENT_ID = "PASTE_GOOGLE_CLIENT_ID_HERE";
+  var useGoogle = GOOGLE_CLIENT_ID.indexOf("PASTE_") !== 0;
+  var googleCredential = "";
+  var googleEmail = "";
   var DEVICE_KEY = "opg-device-id";
   var submitBtn = document.getElementById("gate-submit");
 
@@ -54,12 +64,53 @@
   }
 
   function checkAccess(email) {
-    if (ACCESS_URL.indexOf("PASTE_") === 0) return Promise.resolve({ allowed: true });
-    var url = ACCESS_URL +
-      "?email=" + encodeURIComponent(email) +
-      "&device=" + encodeURIComponent(getDeviceId()) +
-      "&ua=" + encodeURIComponent((navigator.userAgent || "").slice(0, 200));
-    return fetch(url).then(function (r) { return r.json(); });
+    if (ACCESS_URL.indexOf("PASTE_") === 0) return Promise.resolve({ allowed: true, email: email });
+    // text/plain keeps this a "simple" request, so no CORS preflight is needed
+    return fetch(ACCESS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        credential: useGoogle ? googleCredential : "",
+        email: useGoogle ? "" : email,
+        device: getDeviceId(),
+        ua: (navigator.userAgent || "").slice(0, 200)
+      })
+    }).then(function (r) { return r.json(); });
+  }
+
+  function emailFromCredential(cred) {
+    // display only -- the server verifies the token before trusting it
+    try {
+      var part = cred.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      return JSON.parse(atob(part)).email || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function onGoogleCredential(resp) {
+    googleCredential = resp.credential || "";
+    googleEmail = emailFromCredential(googleCredential);
+    document.getElementById("gsi-status").textContent = googleEmail ? "Signed in as " + googleEmail : "Signed in with Google";
+    error.style.display = "none";
+    input.focus();
+  }
+
+  function setupGoogle() {
+    emailInput.style.display = "none";
+    document.getElementById("gsi-wrap").style.display = "";
+    var s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.defer = true;
+    s.onload = function () {
+      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleCredential });
+      google.accounts.id.renderButton(document.getElementById("gsi-btn"), {
+        theme: "filled_black", size: "large", text: "signin_with", shape: "pill"
+      });
+    };
+    s.onerror = function () { showError("Couldn't load Google sign-in. Check your connection."); };
+    document.head.appendChild(s);
   }
 
   var overlay = document.getElementById("gate-overlay");
@@ -77,18 +128,27 @@
     document.body.appendChild(script);
   }
 
+  var alreadyIn = false;
   try {
     if (sessionStorage.getItem(SESSION_KEY) === "yes") {
+      alreadyIn = true;
       unlock();
     }
   } catch (e) {
     // sessionStorage unavailable (e.g. some file:// or privacy modes) -- gate stays up
   }
 
+  if (useGoogle && !alreadyIn) setupGoogle();
+
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     var email = emailInput.value.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (useGoogle) {
+      if (!googleCredential) {
+        showError("Sign in with Google first.");
+        return;
+      }
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       showError("Enter a valid email address.");
       emailInput.focus();
       return;
@@ -106,13 +166,17 @@
         error.style.display = "none";
         try {
           sessionStorage.setItem(SESSION_KEY, "yes");
-          sessionStorage.setItem(EMAIL_KEY, email);
+          sessionStorage.setItem(EMAIL_KEY, res.email || email);
         } catch (err) {
           // ignore if storage isn't available
         }
         unlock();
       } else if (res && res.reason === "blocked") {
         showError("Access is on hold for this email or device. Contact the organizer.");
+      } else if (res && res.reason === "unverified") {
+        googleCredential = "";
+        document.getElementById("gsi-status").textContent = "";
+        showError("Google sign-in couldn't be verified. Sign in with Google again.");
       } else {
         showError("Couldn't verify access. Try again.");
       }

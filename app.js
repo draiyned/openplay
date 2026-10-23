@@ -26,6 +26,8 @@
     sessionStarted: false,
     courts: [],
     matchCounts: [],
+    courtTimers: [],
+    retiredMs: 0,
     gamesPlayed: {},
     benchOrder: {},
     turnCounter: 0,
@@ -478,6 +480,86 @@
   function undoIfLatest(id) {
     var top = undoStack[undoStack.length - 1];
     if (top && top.id === id) undo();
+  }
+
+  /* ---------- court rental timers ---------- */
+  // One timer per court, running from when the court joins the session.
+  // Pausing (rain, breaks) stops the clock. Time from removed courts is kept
+  // in retiredMs so the session total stays correct.
+  function newTimer() { return { acc: 0, since: Date.now() }; }
+
+  function timerMs(t) {
+    return t ? t.acc + (t.since ? Date.now() - t.since : 0) : 0;
+  }
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  function fmtDuration(ms) {
+    var s = Math.floor(ms / 1000);
+    return pad2(Math.floor(s / 3600)) + ":" + pad2(Math.floor((s % 3600) / 60)) + ":" + pad2(s % 60);
+  }
+
+  function totalCourtMs() {
+    return (state.retiredMs || 0) + state.courtTimers.reduce(function (a, t) { return a + timerMs(t); }, 0);
+  }
+
+  function fmtCourtHours(ms) {
+    return (ms / 3600000).toFixed(2) + " court-hrs";
+  }
+
+  // Keep timers lined up with courts after start, add/remove court, undo, reload.
+  function reconcileTimers() {
+    if (!state.sessionStarted) {
+      state.courtTimers = [];
+      state.retiredMs = 0;
+      return;
+    }
+    if (!Array.isArray(state.courtTimers)) state.courtTimers = [];
+    while (state.courtTimers.length < state.courts.length) state.courtTimers.push(newTimer());
+    while (state.courtTimers.length > state.courts.length) {
+      state.retiredMs = (state.retiredMs || 0) + timerMs(state.courtTimers.pop());
+    }
+  }
+
+  function toggleCourtTimer(ci) {
+    var t = state.courtTimers[ci];
+    if (!t) return;
+    if (t.since) {
+      t.acc += Date.now() - t.since;
+      t.since = null;
+    } else {
+      t.since = Date.now();
+    }
+    render();
+  }
+
+  function updateTimers() {
+    if (!state.sessionStarted) return;
+    var els = document.querySelectorAll("[data-court-timer]");
+    for (var i = 0; i < els.length; i++) {
+      els[i].textContent = fmtDuration(timerMs(state.courtTimers[Number(els[i].getAttribute("data-court-timer"))]));
+    }
+    var total = totalCourtMs();
+    var tEl = document.querySelector("[data-total-timer]");
+    if (tEl) tEl.textContent = fmtDuration(total);
+    var hEl = document.querySelector("[data-total-hours]");
+    if (hEl) hEl.textContent = fmtCourtHours(total);
+  }
+
+  function buildCourtTimer(ci) {
+    var t = state.courtTimers[ci];
+    var paused = t && !t.since;
+    return (
+      '<div class="court-timer' + (paused ? " paused" : "") + '">' +
+        ICONS.clock(13) +
+        '<span class="timer-clock" data-court-timer="' + ci + '">' + fmtDuration(timerMs(t)) + '</span>' +
+        '<button type="button" class="timer-btn" data-action="toggle-court-timer" data-ci="' + ci + '" ' +
+          'aria-label="' + (paused ? "Resume court timer" : "Pause court timer") + '" ' +
+          'title="' + (paused ? "Resume court timer" : "Pause court timer") + '">' +
+          (paused ? ICONS.play(12) : ICONS.pause(12)) +
+        '</button>' +
+      '</div>'
+    );
   }
 
   /* ---------- actions ---------- */
@@ -948,6 +1030,12 @@
         size, style
       );
     },
+    play: function (size, style) {
+      return icon('<polygon points="6 4 20 12 6 20 6 4"/>', size, style);
+    },
+    pause: function (size, style) {
+      return icon('<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>', size, style);
+    },
     minus: function (size, style) {
       return icon('<line x1="5" y1="12" x2="19" y2="12"/>', size, style);
     },
@@ -1147,6 +1235,7 @@
           '<span class="court-label">Court ' + (ci + 1) + '</span>' +
           '<span class="match-num">match ' + state.matchCounts[ci] + '</span>' +
         '</div>' +
+        buildCourtTimer(ci) +
         '<div class="team-name">' + teamNames(court.teamA) + '</div>' +
         '<div class="vs">vs</div>' +
         '<div class="team-name">' + teamNames(court.teamB) + '</div>'
@@ -1208,6 +1297,7 @@
       inner += (
         '<div>' +
           '<div class="court-head"><span class="court-label">Court ' + (ci + 1) + '</span></div>' +
+          buildCourtTimer(ci) +
           '<div class="confirm-text">Ready for the next match.</div>' +
           '<button type="button" class="btn-small" data-action="generate-next" data-ci="' + ci + '">' +
             ICONS.shuffle(13) + ' Generate next match</button>' +
@@ -1216,6 +1306,7 @@
     } else {
       inner += (
         '<div class="court-head"><span class="court-label">Court ' + (ci + 1) + '</span></div>' +
+        buildCourtTimer(ci) +
         '<div class="court-idle">' + ICONS.clock(13) + ' Waiting for players</div>'
       );
     }
@@ -1226,7 +1317,15 @@
   function buildCourtsGrid() {
     var occupied = occupiedIds(state.courts);
     var freeCount = state.players.filter(function (p) { return !occupied[p.id] && !state.benched[p.id]; }).length;
-    return '<div class="courts-grid">' + state.courts.map(function (court, ci) {
+    var total = totalCourtMs();
+    var summary = (
+      '<div class="court-time-summary">' +
+        '<span>Rented court time</span>' +
+        '<b data-total-timer>' + fmtDuration(total) + '</b>' +
+        '<span class="muted" data-total-hours>' + fmtCourtHours(total) + '</span>' +
+      '</div>'
+    );
+    return summary + '<div class="courts-grid">' + state.courts.map(function (court, ci) {
       return buildCourtCard(court, ci, freeCount);
     }).join("") + '</div>';
   }
@@ -1507,6 +1606,8 @@
         lockedPairs: state.lockedPairs,
         benched: state.benched,
         history: state.history,
+        courtTimers: state.courtTimers,
+        retiredMs: state.retiredMs,
       };
       sessionStorage.setItem(storageKey(), JSON.stringify(toSave));
     } catch (e) {
@@ -1530,6 +1631,7 @@
   }
 
   function render() {
+    reconcileTimers();
     captureFocus();
     root.innerHTML = buildHTML();
     restoreFocus();
@@ -1562,6 +1664,7 @@
     else if (action === "reroll") rerollCourt(ci);
     else if (action === "download-history") downloadHistory();
     else if (action === "undo") undo();
+    else if (action === "toggle-court-timer") toggleCourtTimer(ci);
     else if (action === "courts-inc") changeCourts(1);
     else if (action === "courts-dec") changeCourts(-1);
   }
@@ -1595,6 +1698,7 @@
     root.addEventListener("keydown", handleKeydown);
     loadState();
     render();
+    setInterval(updateTimers, 1000);
   }
 
   if (document.readyState === "loading") {

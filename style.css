@@ -1508,3 +1508,44 @@ button, input {
   color: rgba(245, 239, 217, 0.5);
 }
 #gate-form button:disabled { opacity: 0.6; cursor: wait; }
+
+/* ---------- court timers ---------- */
+.court-timer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 239, 217, 0.75);
+}
+.court-timer.paused .timer-clock { opacity: 0.5; }
+.timer-clock { font-size: 0.95rem; font-weight: 600; letter-spacing: 0.02em; }
+.timer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid rgba(245, 239, 217, 0.25);
+  color: inherit;
+  cursor: pointer;
+}
+.court-time-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: rgba(245, 239, 217, 0.75);
+}
+.court-time-summary b {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  color: #F5EFD9;
+}
+.court-time-summary .muted { opacity: 0.6; }
+#gsi-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#gsi-status { margin: 0; font-size: 0.8rem; color: rgba(245, 239, 217, 0.7); min-height: 1em; }
