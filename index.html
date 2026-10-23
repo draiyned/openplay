@@ -23,6 +23,7 @@
   </form>
 </div>
 
+<script src="config.js"></script>
 <div id="root" style="display:none"></div>
 <div id="toast-root" aria-live="polite"></div>
 
@@ -31,12 +32,13 @@
   var GATE_PASSWORD = "october2026";
   var SESSION_KEY = "gate-unlocked";
   var EMAIL_KEY = "gate-email";
-  // Paste your Google Apps Script web-app URL here (see README). While this
-  // is left as-is, the gate skips the server check and only validates locally.
-  var ACCESS_URL = "PASTE_APPS_SCRIPT_URL_HERE";
-  // Paste your Google OAuth Web client ID here (see README). While this is
-  // left as-is, the gate falls back to a typed (unverified) email.
-  var GOOGLE_CLIENT_ID = "PASTE_GOOGLE_CLIENT_ID_HERE";
+  // Set in config.js. While the URL is still the placeholder, the gate skips
+  // the server check and only validates locally.
+  var CFG = window.OPG_CONFIG || {};
+  var ACCESS_URL = CFG.ACCESS_URL || "PASTE_APPS_SCRIPT_URL_HERE";
+  // Set in config.js. While the client ID is still the placeholder, the gate
+  // falls back to a typed (unverified) email.
+  var GOOGLE_CLIENT_ID = CFG.GOOGLE_CLIENT_ID || "PASTE_GOOGLE_CLIENT_ID_HERE";
   var useGoogle = GOOGLE_CLIENT_ID.indexOf("PASTE_") !== 0;
   var googleCredential = "";
   var googleEmail = "";

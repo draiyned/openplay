@@ -1,17 +1,14 @@
 /**
- * Open Play access log + block list (Google Apps Script).
- *
- * Setup: see README "Email log and device blocking".
- * The sheet "Access" is created automatically with these columns:
- *   A Email | B Device ID | C Status | D First seen | E Last seen | F Visits | G Browser
- * Status is "allowed" or "blocked". Change it by hand in the sheet.
- * A visitor is refused if ANY row matching their email OR their device ID says "blocked".
- * To unblock someone, set every row with their email / device ID back to "allowed".
+ * Open Play access log, block list and admin API (Google Apps Script).
+ * The "Access" sheet is the database; manage it from the site's /admin/ page.
+ * Columns: A Email | B Device ID | C Status | D First seen | E Last seen | F Visits | G Browser
+ * A visitor is refused if ANY row matching their email OR their device ID is "blocked".
  */
 var SHEET_NAME = "Access";
-// Paste the same Google OAuth Web client ID used in index.html. While this
-// is left as-is, typed (unverified) emails are accepted.
+// Same Google OAuth Web client ID as config.js. While left as-is, typed (unverified) emails are accepted.
 var GOOGLE_CLIENT_ID = "PASTE_GOOGLE_CLIENT_ID_HERE";
+// Your private key for the /admin/ page (12+ characters). Lives only in this script.
+var ADMIN_KEY = "PASTE_ADMIN_KEY_HERE";
 
 function getSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -31,15 +28,12 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// Sheets treats text starting with = + - @ as a formula. Anything a visitor
-// controls is neutralized before it is written, so a crafted request can't
-// plant a formula in your sheet.
+// Sheets treats text starting with = + - @ as a formula; neutralize visitor-controlled text.
 function safeCell_(v) {
   v = String(v);
   return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 }
 
-// Asks Google whether the sign-in token is genuine and meant for this app.
 function verifiedEmail_(credential) {
   if (!credential) return "";
   var res = UrlFetchApp.fetch(
@@ -62,7 +56,13 @@ function doGet() {
 function doPost(e) {
   var body = {};
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json_({ allowed: false, reason: "invalid" }); }
+  var action = String(body.action || "check");
+  if (action === "list" || action === "set") return admin_(action, body);
+  return check_(body);
+}
 
+/* ---------- visitor sign-in check ---------- */
+function check_(body) {
   var email;
   if (GOOGLE_CLIENT_ID.indexOf("PASTE_") !== 0) {
     email = verifiedEmail_(String(body.credential || ""));
@@ -104,6 +104,80 @@ function doPost(e) {
       sh.appendRow([email, device, blocked ? "blocked" : "allowed", now, now, 1, safeCell_(ua)]);
     }
     return json_({ allowed: !blocked, reason: blocked ? "blocked" : "ok", email: email });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ---------- admin: list and block / unblock ---------- */
+function iso_(v) {
+  return v instanceof Date ? v.toISOString() : String(v || "");
+}
+
+function listRows_(sh) {
+  var vals = sh.getDataRange().getValues();
+  var blockedEmails = {}, blockedDevices = {}, out = [], i;
+  for (i = 1; i < vals.length; i++) {
+    if (String(vals[i][2]).toLowerCase() === "blocked") {
+      blockedEmails[String(vals[i][0]).toLowerCase()] = true;
+      blockedDevices[String(vals[i][1])] = true;
+    }
+  }
+  for (i = 1; i < vals.length; i++) {
+    var em = String(vals[i][0]).toLowerCase();
+    var dv = String(vals[i][1]);
+    out.push({
+      row: i + 1,
+      email: em,
+      device: dv,
+      status: String(vals[i][2]).toLowerCase(),
+      blocked: !!(blockedEmails[em] || blockedDevices[dv]),
+      first: iso_(vals[i][3]),
+      last: iso_(vals[i][4]),
+      visits: Number(vals[i][5]) || 0,
+      ua: String(vals[i][6] || "")
+    });
+  }
+  return out;
+}
+
+function admin_(action, body) {
+  if (ADMIN_KEY.indexOf("PASTE_") === 0 || ADMIN_KEY.length < 12) return json_({ ok: false, reason: "admin_disabled" });
+
+  // 8 wrong keys locks the admin API for 15 minutes
+  var cache = CacheService.getScriptCache();
+  var fails = Number(cache.get("admin_fails") || 0);
+  if (fails >= 8) return json_({ ok: false, reason: "locked" });
+  if (String(body.key || "") !== ADMIN_KEY) {
+    cache.put("admin_fails", String(fails + 1), 900);
+    return json_({ ok: false, reason: "bad_key" });
+  }
+  cache.remove("admin_fails");
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var sh = getSheet_();
+    if (action === "set") {
+      var rowNum = Number(body.row);
+      var to = body.status === "blocked" ? "blocked" : "allowed";
+      var vals = sh.getDataRange().getValues();
+      if (!(rowNum >= 2 && rowNum <= vals.length)) return json_({ ok: false, reason: "no_row" });
+      var target = vals[rowNum - 1];
+      var tEmail = String(target[0]).toLowerCase();
+      var tDevice = String(target[1]);
+      if (tEmail !== String(body.email || "").toLowerCase()) return json_({ ok: false, reason: "stale" });
+      if (to === "blocked") {
+        sh.getRange(rowNum, 3).setValue("blocked");
+      } else {
+        // clear every hold tied to this email or this device
+        for (var i = 1; i < vals.length; i++) {
+          var linked = String(vals[i][0]).toLowerCase() === tEmail || String(vals[i][1]) === tDevice;
+          if (linked && String(vals[i][2]).toLowerCase() === "blocked") sh.getRange(i + 1, 3).setValue("allowed");
+        }
+      }
+    }
+    return json_({ ok: true, rows: listRows_(sh) });
   } finally {
     lock.releaseLock();
   }

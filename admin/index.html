@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Open Play Admin</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b1a17; --card:#122320; --line:rgba(245,239,217,.16); --txt:#F5EFD9; --mut:rgba(245,239,217,.6); --ok:#7fd49a; --bad:#ff8a80; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding:16px; padding-top:max(16px, env(safe-area-inset-top)); }
+  h1 { font-size:1.25rem; margin:0 0 12px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  input, button { font:inherit; color:inherit; }
+  input[type=password], input[type=search] { width:100%; padding:11px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); }
+  button { cursor:pointer; border-radius:8px; border:1px solid var(--line); background:var(--card); padding:9px 14px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .primary { background:#e9dfae; color:#10201c; border-color:transparent; font-weight:600; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .row > input { flex:1; }
+  #err { color:var(--bad); min-height:1.2em; margin:8px 0 0; font-size:.9rem; }
+  .stats { display:flex; gap:14px; margin:4px 0 12px; color:var(--mut); font-size:.85rem; flex-wrap:wrap; }
+  .stats b { color:var(--txt); }
+  .acct { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; margin:10px 0; }
+  .acct.blocked { border-color:rgba(255,138,128,.5); }
+  .top { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+  .mail { font-weight:600; word-break:break-all; }
+  .badge { font-size:.75rem; padding:2px 8px; border-radius:99px; border:1px solid currentColor; white-space:nowrap; }
+  .badge.ok { color:var(--ok); } .badge.bad { color:var(--bad); }
+  .meta { color:var(--mut); font-size:.8rem; margin-top:6px; word-break:break-word; }
+  .act { margin-top:10px; }
+  .danger { color:var(--bad); }
+  .hide { display:none; }
+  #empty { color:var(--mut); text-align:center; padding:24px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Open Play Admin</h1>
+
+  <form id="login">
+    <input type="password" id="key" placeholder="Admin key" autocomplete="off" />
+    <div class="row" style="margin-top:8px"><button class="primary" id="go" type="submit">Open</button></div>
+  </form>
+
+  <div id="panel" class="hide">
+    <div class="row" style="margin-bottom:8px">
+      <input type="search" id="q" placeholder="Search email or device" />
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div id="list"></div>
+    <div id="empty" class="hide">No sign-ins yet.</div>
+    <div class="row" style="margin-top:14px"><button id="logout" type="button">Lock</button></div>
+  </div>
+  <p id="err"></p>
+</div>
+
+<script src="../config.js"></script>
+<script>
+(function () {
+  var CFG = window.OPG_CONFIG || {};
+  var URL_ = CFG.ACCESS_URL || "";
+  var KEY_STORE = "opg-admin-key";
+  var key = "";
+  var rows = [];
+  var $ = function (id) { return document.getElementById(id); };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function showErr(m) { $("err").textContent = m || ""; }
+
+  function api(payload) {
+    if (!URL_ || URL_.indexOf("PASTE_") === 0) return Promise.reject(new Error("config"));
+    payload.key = key;
+    return fetch(URL_, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); });
+  }
+
+  function reason(res) {
+    var map = {
+      bad_key: "Wrong key.",
+      locked: "Too many wrong tries. Wait 15 minutes.",
+      admin_disabled: "Admin isn't set up in the script yet (set ADMIN_KEY).",
+      stale: "That row changed. Refreshing.",
+      no_row: "That row no longer exists. Refreshing."
+    };
+    return map[res && res.reason] || "Something went wrong.";
+  }
+
+  function fmt(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    return isNaN(d) ? esc(iso) : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  function render() {
+    var q = $("q").value.trim().toLowerCase();
+    var shown = rows.filter(function (r) {
+      return !q || r.email.toLowerCase().indexOf(q) >= 0 || r.device.toLowerCase().indexOf(q) >= 0;
+    }).sort(function (a, b) { return String(b.last).localeCompare(String(a.last)); });
+
+    var emails = {}, blockedEmails = {};
+    rows.forEach(function (r) { emails[r.email] = 1; if (r.blocked) blockedEmails[r.email] = 1; });
+    $("stats").innerHTML =
+      "<span><b>" + Object.keys(emails).length + "</b> accounts</span>" +
+      "<span><b>" + rows.length + "</b> devices</span>" +
+      "<span><b>" + Object.keys(blockedEmails).length + "</b> on hold</span>";
+
+    $("empty").classList.toggle("hide", rows.length > 0);
+    $("list").innerHTML = shown.map(function (r) {
+      var b = r.blocked;
+      return (
+        '<div class="acct' + (b ? " blocked" : "") + '">' +
+          '<div class="top"><div class="mail">' + esc(r.email) + '</div>' +
+          '<span class="badge ' + (b ? "bad" : "ok") + '">' + (b ? "on hold" : "allowed") + '</span></div>' +
+          '<div class="meta">Last seen ' + fmt(r.last) + ' · first ' + fmt(r.first) + ' · ' + esc(r.visits) + ' visit' + (r.visits === 1 ? "" : "s") + '</div>' +
+          '<div class="meta">Device ' + esc(r.device.slice(0, 8)) + ' · ' + esc(r.ua.slice(0, 90)) + '</div>' +
+          '<div class="act"><button type="button" class="' + (b ? "" : "danger") + '" data-row="' + r.row + '" data-email="' + esc(r.email) + '" data-to="' + (b ? "allowed" : "blocked") + '">' +
+            (b ? "Unblock" : "Block") + '</button></div>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function load() {
+    showErr("");
+    return api({ action: "list" }).then(function (res) {
+      if (!res || !res.ok) {
+        if (res && (res.reason === "bad_key" || res.reason === "locked" || res.reason === "admin_disabled")) lock();
+        showErr(reason(res));
+        return;
+      }
+      rows = res.rows || [];
+      $("login").classList.add("hide");
+      $("panel").classList.remove("hide");
+      try { sessionStorage.setItem(KEY_STORE, key); } catch (e) {}
+      render();
+    }).catch(function (e) {
+      showErr(e.message === "config" ? "Set ACCESS_URL in config.js first." : "Couldn't reach the server. Try again.");
+    });
+  }
+
+  function lock() {
+    key = "";
+    rows = [];
+    try { sessionStorage.removeItem(KEY_STORE); } catch (e) {}
+    $("panel").classList.add("hide");
+    $("login").classList.remove("hide");
+    $("key").value = "";
+  }
+
+  $("login").addEventListener("submit", function (e) {
+    e.preventDefault();
+    key = $("key").value;
+    if (!key) return;
+    $("go").disabled = true;
+    load().then(function () { $("go").disabled = false; });
+  });
+  $("refresh").addEventListener("click", load);
+  $("logout").addEventListener("click", lock);
+  $("q").addEventListener("input", render);
+
+  $("list").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-row]");
+    if (!btn) return;
+    var to = btn.dataset.to, email = btn.dataset.email;
+    var msg = to === "blocked"
+      ? "Put " + email + " and this device on hold?"
+      : "Unblock " + email + "? This also clears holds tied to the same email or device.";
+    if (!window.confirm(msg)) return;
+    btn.disabled = true;
+    api({ action: "set", row: Number(btn.dataset.row), email: email, status: to }).then(function (res) {
+      if (!res || !res.ok) { showErr(reason(res)); return load(); }
+      rows = res.rows || [];
+      showErr("");
+      render();
+    }).catch(function () { showErr("Couldn't reach the server. Try again."); btn.disabled = false; });
+  });
+
+  try {
+    var saved = sessionStorage.getItem(KEY_STORE);
+    if (saved) { key = saved; load(); }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

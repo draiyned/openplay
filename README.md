@@ -83,3 +83,13 @@ Google sign-in does not work when the page is opened as a local file; use the re
 Every court shows a rental clock that starts when the session starts (or when a court is added) and
 can be paused/resumed. The total across courts, in `HH:MM:SS` and court-hours, sits above the courts.
 Time from a removed court stays in the total. Ending the session clears the timers.
+
+## Admin page (/admin/)
+`admin/index.html` lists everyone who signed in and lets you block or unblock them, so you never
+need to open the sheet (it stays behind the scenes as the database).
+
+- Set `ADMIN_KEY` in `Code.gs` (12+ characters, kept only in Apps Script), redeploy a new version,
+  then open `https://<your-site>/admin/` and enter the key.
+- **Block** puts that email and device on hold. **Unblock** clears every hold tied to that email or device.
+- 8 wrong keys locks the admin API for 15 minutes.
+- Site settings (`ACCESS_URL`, `GOOGLE_CLIENT_ID`) now live in `config.js` and are shared by the gate and the admin page.
