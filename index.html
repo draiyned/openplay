@@ -11,10 +11,11 @@
 <div id="gate-overlay">
   <form id="gate-form" novalidate>
     <h1>Sign In</h1>
-    <input type="email" id="gate-email" placeholder="Enter your email address" autocomplete="email" inputmode="email" autofocus />
-    <input type="password" id="gate-input" placeholder="Enter the app password" autocomplete="off" />
-    <button type="submit">Unlock</button>
+    <input type="email" id="gate-email" placeholder="Email address" autocomplete="email" inputmode="email" autofocus />
+    <input type="password" id="gate-input" placeholder="Password" autocomplete="off" />
+    <button type="submit" id="gate-submit">Unlock</button>
     <p id="gate-error">Incorrect password.</p>
+    <p id="gate-note">Your email is recorded to manage access to this tool.</p>
   </form>
 </div>
 
@@ -26,6 +27,40 @@
   var GATE_PASSWORD = "october2026";
   var SESSION_KEY = "gate-unlocked";
   var EMAIL_KEY = "gate-email";
+  // Paste your Google Apps Script web-app URL here (see README). While this
+  // is left as-is, the gate skips the server check and only validates locally.
+  var ACCESS_URL = "PASTE_APPS_SCRIPT_URL_HERE";
+  var DEVICE_KEY = "opg-device-id";
+  var submitBtn = document.getElementById("gate-submit");
+
+  function getDeviceId() {
+    try {
+      var id = localStorage.getItem(DEVICE_KEY);
+      if (!id) {
+        id = (window.crypto && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : "d-" + Date.now() + "-" + Math.random().toString(36).slice(2, 12);
+        localStorage.setItem(DEVICE_KEY, id);
+      }
+      return id;
+    } catch (e) {
+      return "no-storage";
+    }
+  }
+
+  function showError(msg) {
+    error.textContent = msg;
+    error.style.display = "block";
+  }
+
+  function checkAccess(email) {
+    if (ACCESS_URL.indexOf("PASTE_") === 0) return Promise.resolve({ allowed: true });
+    var url = ACCESS_URL +
+      "?email=" + encodeURIComponent(email) +
+      "&device=" + encodeURIComponent(getDeviceId()) +
+      "&ua=" + encodeURIComponent((navigator.userAgent || "").slice(0, 200));
+    return fetch(url).then(function (r) { return r.json(); });
+  }
 
   var overlay = document.getElementById("gate-overlay");
   var form = document.getElementById("gate-form");
@@ -54,26 +89,39 @@
     e.preventDefault();
     var email = emailInput.value.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      error.textContent = "Enter a valid email address.";
-      error.style.display = "block";
+      showError("Enter a valid email address.");
       emailInput.focus();
       return;
     }
-    if (input.value === GATE_PASSWORD) {
-      error.style.display = "none";
-      try {
-        sessionStorage.setItem(SESSION_KEY, "yes");
-        sessionStorage.setItem(EMAIL_KEY, email);
-      } catch (e) {
-        // ignore if storage isn't available
-      }
-      unlock();
-    } else {
-      error.textContent = "Incorrect password.";
-      error.style.display = "block";
+    if (input.value !== GATE_PASSWORD) {
+      showError("Incorrect password.");
       input.value = "";
       input.focus();
+      return;
     }
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Checking…";
+    checkAccess(email).then(function (res) {
+      if (res && res.allowed) {
+        error.style.display = "none";
+        try {
+          sessionStorage.setItem(SESSION_KEY, "yes");
+          sessionStorage.setItem(EMAIL_KEY, email);
+        } catch (err) {
+          // ignore if storage isn't available
+        }
+        unlock();
+      } else if (res && res.reason === "blocked") {
+        showError("Access is on hold for this email or device. Contact the organizer.");
+      } else {
+        showError("Couldn't verify access. Try again.");
+      }
+    }).catch(function () {
+      showError("Couldn't reach the access server. Check your connection and try again.");
+    }).then(function () {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Unlock";
+    });
   });
 })();
 </script>

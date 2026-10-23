@@ -1501,3 +1501,10 @@ button, input {
   font-size: 0.75rem;
   opacity: 0.7;
 }
+
+#gate-note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: rgba(245, 239, 217, 0.5);
+}
+#gate-form button:disabled { opacity: 0.6; cursor: wait; }

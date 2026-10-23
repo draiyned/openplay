@@ -46,3 +46,21 @@ That's convenient, but it has two failure modes this version removes entirely:
 
 This version has zero external requests and uses a plain `<script src="app.js">` tag,
 so both of those failure modes are gone.
+
+## Email log and device blocking (Google Sheet)
+The gate records each visitor's email and a per-browser device ID in a Google Sheet that
+only you can open, and refuses anyone you've marked as blocked.
+
+1. Create a new Google Sheet. Open **Extensions → Apps Script**.
+2. Replace the editor contents with `apps-script/Code.gs` from this repo and save.
+3. **Deploy → New deployment → type: Web app**. Execute as: **Me**. Who has access: **Anyone**. Deploy and authorize.
+4. Copy the web-app URL (ends in `/exec`) and paste it into `ACCESS_URL` in `index.html`.
+5. Push to GitHub. Each sign-in now appears as a row in the **Access** sheet.
+
+**Block / unblock:** change the **Status** cell to `blocked` or `allowed`. A visitor is refused if any
+row matching their email *or* their device ID says `blocked`, so to unblock someone set every row
+with their email and device ID back to `allowed`. Blocks apply at the next sign-in, not mid-session.
+
+**Limits:** the device ID is a random value stored in the browser. Clearing site data, private mode,
+or another browser/phone gets a new ID, so the email block is what holds those cases. Anyone can type
+someone else's email. If you edit `Code.gs` later, create a **new version** under Manage deployments.
