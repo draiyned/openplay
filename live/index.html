@@ -61,7 +61,7 @@
   var CFG = window.OPG_CONFIG || {};
   var URL_ = CFG.ACCESS_URL || "";
   var id = new URLSearchParams(window.location.search).get("s") || "";
-  var snap = null, lastOk = 0, notFound = false, failed = false;
+  var snap = null, lastOk = 0, notFound = false, failed = false, problem = "";
   var $ = function (i) { return document.getElementById(i); };
 
   function esc(s) {
@@ -140,8 +140,8 @@
     }
     if (!snap) {
       pill.className = "pill off";
-      pill.textContent = failed ? "Offline" : "Connecting…";
-      content.innerHTML = '<div class="msg">' + (notFound
+      pill.textContent = problem ? "Problem" : failed ? "Offline" : "Connecting…";
+      content.innerHTML = '<div class="msg">' + (problem ? esc(problem) : notFound
         ? "Waiting for the host to start sharing…<br>This page updates by itself."
         : failed ? "Can't reach the server. Retrying…" : "Loading…") + "</div>";
       banner.innerHTML = "";
@@ -165,12 +165,18 @@
 
   function poll() {
     if (!id || !URL_ || URL_.indexOf("PASTE_") === 0) { paint(); return; }
-    fetch(URL_ + "?action=live&id=" + encodeURIComponent(id))
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 15000) : null;
+    fetch(URL_ + "?action=live&id=" + encodeURIComponent(id), ctl ? { signal: ctl.signal } : undefined)
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        failed = false;
+        if (timer) clearTimeout(timer);
+        failed = false; problem = "";
         if (res && res.ok && res.snap) { snap = res.snap; notFound = false; lastOk = Date.now(); }
         else if (res && res.reason === "none") { notFound = true; }
+        else if (res && res.reason === "use_post") { problem = "The live server hasn't been updated yet. Ask the host to deploy the latest script."; }
+        else if (res && res.reason === "invalid") { problem = "This link isn't valid. Scan the QR code again."; }
+        else { problem = "Unexpected reply from the server."; }
         paint(); tickAgo();
       })
       .catch(function () { failed = true; paint(); });
