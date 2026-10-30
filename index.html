@@ -24,6 +24,7 @@
 </div>
 
 <script src="config.js"></script>
+<script src="qr.js"></script>
 <div id="root" style="display:none"></div>
 <div id="toast-root" aria-live="polite"></div>
 
@@ -56,8 +57,47 @@
       }
       return id;
     } catch (e) {
-      return "no-storage";
+      // no storage: use a one-off id so everyone without storage isn't treated as one device
+      return "tmp-" + Math.random().toString(36).slice(2, 14);
     }
+  }
+
+  // While someone is inside, ask the server every few seconds whether they've
+  // been put on hold, and send them back to the sign-in screen if so.
+  var POLL_MS = (Number(CFG.POLL_SECONDS) || 15) * 1000;
+  var NOTICE_KEY = "gate-notice";
+  var pollTimer = null;
+
+  function kickOut(msg) {
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.setItem(NOTICE_KEY, msg);
+    } catch (e) {}
+    location.reload();
+  }
+
+  function pollStatus() {
+    if (ACCESS_URL.indexOf("PASTE_") === 0) return;
+    var email = "";
+    try { email = sessionStorage.getItem(EMAIL_KEY) || ""; } catch (e) {}
+    fetch(ACCESS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action: "status", email: email, device: getDeviceId() })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res && res.allowed === false) kickOut("Your access was put on hold. Contact the organizer.");
+    }).catch(function () {
+      // offline or server hiccup: don't kick anyone out because of that
+    });
+  }
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollStatus();
+    pollTimer = setInterval(pollStatus, POLL_MS);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) pollStatus();
+    });
   }
 
   function showError(msg) {
@@ -128,6 +168,7 @@
     var script = document.createElement("script");
     script.src = "app.js";
     document.body.appendChild(script);
+    startPolling();
   }
 
   var alreadyIn = false;
@@ -139,6 +180,14 @@
   } catch (e) {
     // sessionStorage unavailable (e.g. some file:// or privacy modes) -- gate stays up
   }
+
+  try {
+    var notice = sessionStorage.getItem(NOTICE_KEY);
+    if (notice && !alreadyIn) {
+      sessionStorage.removeItem(NOTICE_KEY);
+      showError(notice);
+    }
+  } catch (e) {}
 
   if (useGoogle && !alreadyIn) setupGoogle();
 
@@ -182,8 +231,8 @@
       } else {
         showError("Couldn't verify access. Try again.");
       }
-    }).catch(function () {
-      showError("Couldn't reach the access server. Check your connection and try again.");
+    }).catch(function (err) {
+      showError("Couldn't reach the access server (" + String((err && err.message) || err).slice(0, 80) + "). Check your connection and try again.");
     }).then(function () {
       submitBtn.disabled = false;
       submitBtn.textContent = "Unlock";

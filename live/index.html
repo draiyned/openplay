@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Open Play — Live</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b1a17; --card:#122320; --line:rgba(245,239,217,.16); --txt:#F5EFD9; --mut:rgba(245,239,217,.62); --ok:#7fd49a; --bad:#ff8a80; --gold:#e9dfae; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; padding:14px; padding-top:max(14px, env(safe-area-inset-top)); padding-bottom:max(24px, env(safe-area-inset-bottom)); }
+  .wrap { max-width:640px; margin:0 auto; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  h1 { font-size:1.2rem; margin:0; }
+  h2 { font-size:.78rem; letter-spacing:.08em; text-transform:uppercase; color:var(--mut); margin:20px 0 8px; font-weight:600; }
+  .pill { font-size:.75rem; padding:3px 10px; border-radius:99px; border:1px solid currentColor; white-space:nowrap; }
+  .pill.live { color:var(--ok); } .pill.off { color:var(--bad); } .pill.end { color:var(--gold); }
+  .sub { color:var(--mut); font-size:.8rem; }
+  .banner { background:#1b3a33; border:1px solid rgba(233,223,174,.45); border-radius:10px; padding:10px 12px; margin:10px 0; font-size:.9rem; }
+  .courts { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+  .card.playing { border-color:rgba(233,223,174,.45); }
+  .chead { display:flex; justify-content:space-between; color:var(--mut); font-size:.8rem; margin-bottom:6px; }
+  .team { font-weight:600; }
+  .vs { color:var(--mut); font-size:.75rem; margin:2px 0; }
+  .free { color:var(--mut); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { background:var(--card); border:1px solid var(--line); border-radius:99px; padding:4px 10px; font-size:.85rem; }
+  .chip b { color:var(--gold); margin-right:4px; }
+  .chip.hot { border-color:rgba(233,223,174,.7); background:rgba(233,223,174,.14); font-weight:600; }
+  .card.next { border-color:rgba(233,223,174,.7); }
+  .nextbadge { color:var(--gold); font-weight:700; letter-spacing:.08em; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { padding:7px 4px; text-align:right; border-bottom:1px solid var(--line); font-size:.85rem; }
+  th { color:var(--mut); font-weight:600; font-size:.72rem; }
+  th:nth-child(2), td:nth-child(2) { text-align:left; width:100%; }
+  td:first-child, th:first-child { text-align:left; color:var(--mut); }
+  .pos { color:var(--ok); } .neg { color:var(--bad); }
+  .scroll { overflow-x:auto; }
+  .res { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 12px; margin-bottom:8px; font-size:.9rem; }
+  .res .row { display:flex; justify-content:space-between; gap:10px; }
+  .res .win { font-weight:700; }
+  .res .meta { color:var(--mut); font-size:.75rem; margin-bottom:3px; }
+  .empty { color:var(--mut); padding:6px 0; }
+  .msg { text-align:center; padding:48px 12px; color:var(--mut); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>Open Play · Live</h1><div class="sub" id="ago"></div></div>
+    <span class="pill off" id="pill">Connecting…</span>
+  </header>
+  <div id="banner"></div>
+  <div id="content"><div class="msg">Loading…</div></div>
+</div>
+
+<script src="../config.js"></script>
+<script>
+(function () {
+  var CFG = window.OPG_CONFIG || {};
+  var URL_ = CFG.ACCESS_URL || "";
+  var id = new URLSearchParams(window.location.search).get("s") || "";
+  var snap = null, lastOk = 0, notFound = false, failed = false;
+  var $ = function (i) { return document.getElementById(i); };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function names(a) { return esc((a || []).join(" & ")); }
+
+  function renderSnap(s) {
+    var h = "";
+    if (s.stopped) {
+      return '<div class="msg">The host stopped sharing. Thanks for playing!</div>';
+    }
+    h += "<h2>On court</h2>";
+    if (!s.courts || !s.courts.length) h += '<div class="empty">Session starting soon.</div>';
+    else {
+      h += '<div class="courts">' + s.courts.map(function (c) {
+        if (c.free) return '<div class="card"><div class="chead"><span>Court ' + esc(c.n) + '</span></div><div class="free">Free — waiting for players</div></div>';
+        return '<div class="card playing"><div class="chead"><span>Court ' + esc(c.n) + '</span><span>Match ' + esc(c.m) + '</span></div>' +
+          '<div class="team">' + names(c.a) + '</div><div class="vs">vs</div><div class="team">' + names(c.b) + '</div></div>';
+      }).join("") + "</div>";
+    }
+
+    var q = s.queue || [];
+    h += "<h2>Up next (" + q.length + " waiting)</h2>";
+    if (s.next && s.next.length) {
+      var f = s.next[0];
+      h += '<div class="card next"><div class="chead"><span class="nextbadge">NEXT</span><span>next match</span></div>' +
+        '<div class="team">' + names(f.a) + '</div><div class="vs">vs</div><div class="team">' + names(f.b) + "</div></div>";
+      if (s.next.length > 1) {
+        h += '<div class="sub" style="margin:10px 0 6px">After that (may change)</div>';
+        h += s.next.slice(1).map(function (m, i) {
+          return '<div class="res"><div class="meta">' + (i + 2) + (i === 0 ? "nd" : "rd") + ' up</div><div class="row"><span>' + names(m.a) + '</span><span class="vs">vs</span><span>' + names(m.b) + "</span></div></div>";
+        }).join("");
+      }
+      if (s.rest && s.rest.length) {
+        h += '<div class="sub" style="margin:10px 0 6px">Also waiting</div><div class="chips">' +
+          s.rest.map(function (n) { return '<span class="chip">' + esc(n) + "</span>"; }).join("") + "</div>";
+      }
+    } else if (!q.length) {
+      h += '<div class="empty">Nobody waiting.</div>';
+    } else {
+      h += '<div class="card next"><div class="chead"><span class="nextbadge">NEXT</span><span>needs ' + Math.max(0, 4 - q.length) + ' more player' + (4 - q.length === 1 ? "" : "s") + "</span></div>" +
+        '<div class="chips">' + q.map(function (n) { return '<span class="chip hot">' + esc(n) + "</span>"; }).join("") + "</div></div>";
+    }
+    if (s.onBreak && s.onBreak.length) h += '<div class="sub" style="margin-top:8px">On break: ' + esc(s.onBreak.join(", ")) + "</div>";
+
+    h += "<h2>Leaderboard</h2>";
+    if (!s.standings || !s.standings.length || !s.standings.some(function (r) { return r.mp > 0; })) h += '<div class="empty">Standings appear after the first match.</div>';
+    else {
+      h += '<div class="scroll"><table><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>MP</th><th>+/-</th><th>Rating</th></tr></thead><tbody>' +
+        s.standings.map(function (r, i) {
+          var d = Number(r.d) || 0;
+          return "<tr><td>" + (i + 1) + "</td><td>" + esc(r.n) + "</td><td>" + esc(r.w) + "-" + esc(r.l) + "</td><td>" + esc(r.mp) +
+            '</td><td class="' + (d > 0 ? "pos" : d < 0 ? "neg" : "") + '">' + (d > 0 ? "+" : "") + d + "</td><td>" + (Number(r.r) || 0).toFixed(2) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+
+    h += "<h2>Recent results</h2>";
+    if (!s.history || !s.history.length) h += '<div class="empty">No matches finished yet.</div>';
+    else h += s.history.map(function (m) {
+      return '<div class="res"><div class="meta">Court ' + esc(m.c) + " · match " + esc(m.m) + "</div>" +
+        '<div class="row' + (m.w === "A" ? " win" : "") + '"><span>' + names(m.a) + "</span><span>" + esc(m.sa) + "</span></div>" +
+        '<div class="row' + (m.w === "B" ? " win" : "") + '"><span>' + names(m.b) + "</span><span>" + esc(m.sb) + "</span></div></div>";
+    }).join("");
+    return h;
+  }
+
+  function paint() {
+    var pill = $("pill"), banner = $("banner"), content = $("content");
+    if (!id || !URL_ || URL_.indexOf("PASTE_") === 0) {
+      pill.className = "pill off"; pill.textContent = "No link";
+      content.innerHTML = '<div class="msg">This link isn\'t valid. Scan the QR code again.</div>';
+      return;
+    }
+    if (!snap) {
+      pill.className = "pill off";
+      pill.textContent = failed ? "Offline" : "Connecting…";
+      content.innerHTML = '<div class="msg">' + (notFound
+        ? "Waiting for the host to start sharing…<br>This page updates by itself."
+        : failed ? "Can't reach the server. Retrying…" : "Loading…") + "</div>";
+      banner.innerHTML = "";
+      return;
+    }
+    var age = Math.max(0, Math.round((Date.now() - snap.t) / 1000));
+    var stale = age > 120 && !snap.ended && !snap.stopped;
+    pill.className = "pill " + (snap.ended || snap.stopped ? "end" : stale ? "off" : "live");
+    pill.textContent = snap.stopped ? "Stopped" : snap.ended ? "Ended" : stale ? "Host offline" : "Live";
+    banner.innerHTML = snap.ended ? '<div class="banner">Session ended — final results below.</div>'
+      : stale ? '<div class="banner">The host hasn\'t sent an update in a while. Showing the last known state.</div>' : "";
+    content.innerHTML = renderSnap(snap);
+  }
+
+  function tickAgo() {
+    var el = $("ago");
+    if (!snap || !snap.t) { el.textContent = ""; return; }
+    var s = Math.max(0, Math.round((Date.now() - snap.t) / 1000));
+    el.textContent = "Updated " + (s < 5 ? "just now" : s < 90 ? s + "s ago" : Math.round(s / 60) + " min ago");
+  }
+
+  function poll() {
+    if (!id || !URL_ || URL_.indexOf("PASTE_") === 0) { paint(); return; }
+    fetch(URL_ + "?action=live&id=" + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        failed = false;
+        if (res && res.ok && res.snap) { snap = res.snap; notFound = false; lastOk = Date.now(); }
+        else if (res && res.reason === "none") { notFound = true; }
+        paint(); tickAgo();
+      })
+      .catch(function () { failed = true; paint(); });
+  }
+
+  paint();
+  poll();
+  setInterval(function () { if (!document.hidden) poll(); }, 6000 + Math.floor(Math.random() * 1000));
+  setInterval(tickAgo, 1000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) poll(); });
+})();
+</script>
+</body>
+</html>

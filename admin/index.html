@@ -144,7 +144,7 @@
       try { sessionStorage.setItem(KEY_STORE, key); } catch (e) {}
       render();
     }).catch(function (e) {
-      showErr(e.message === "config" ? "Set ACCESS_URL in config.js first." : "Couldn't reach the server. Try again.");
+      showErr(e.message === "config" ? "Set ACCESS_URL in config.js first." : "Couldn't reach the server (" + String(e.message || e).slice(0, 80) + "). Try again.");
     });
   }
 
@@ -182,7 +182,7 @@
       rows = res.rows || [];
       showErr("");
       render();
-    }).catch(function () { showErr("Couldn't reach the server. Try again."); btn.disabled = false; });
+    }).catch(function (e) { showErr("Couldn't reach the server (" + String((e && e.message) || e).slice(0, 80) + "). Try again."); btn.disabled = false; });
   });
 
   try {

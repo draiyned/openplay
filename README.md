@@ -93,3 +93,32 @@ need to open the sheet (it stays behind the scenes as the database).
 - **Block** puts that email and device on hold. **Unblock** clears every hold tied to that email or device.
 - 8 wrong keys locks the admin API for 15 minutes.
 - Site settings (`ACCESS_URL`, `GOOGLE_CLIENT_ID`) now live in `config.js` and are shared by the gate and the admin page.
+
+## Live blocking and sign-in alerts
+- While someone is inside, the page asks the script every 15 seconds (and when they return to the tab)
+  whether they were put on hold. If so they are sent back to the sign-in screen. Offline or a server
+  hiccup never kicks anyone out. Change the interval with `POLL_SECONDS` in `config.js`.
+- Every sign-in (and every blocked attempt) emails the Google account that owns the script, or `NOTIFY_EMAIL`
+  if set. At most 30 alerts per hour are sent, to protect Gmail's daily limit. Run `authorize_` once in
+  the Apps Script editor to approve the email permission, then deploy a new version.
+
+## Restore after closing a tab
+Each tab keeps its own session (players, courts, matches, leaderboard, timers) and also saves a copy on the
+device. A new tab lists the saved sessions of closed tabs (newest first, within 12 hours) with **Restore** or
+**Discard** for each, so several groups in several tabs can be recovered separately. A session saved in the
+last 30 seconds is flagged "may still be open in another tab". Court timers keep running while a tab is closed.
+
+## Past sessions (saved results)
+Ending a session saves the leaderboard and every match under **Past sessions** on this device (last 20),
+with a CSV download. Undoing "End session" removes the saved copy again.
+
+## Live view (QR code)
+During a session, **Share live** → **Create QR code** gives players a link/QR to `live/`, showing
+courts, the NEXT lineup, the leaderboard and recent results. Needs `ACCESS_URL` in `config.js` and the latest
+`Code.gs` deployed as a new version. Only this device can update a link (secret token); links expire 6 hours
+after the last update. The QR code is generated in `qr.js` with no outside service.
+
+## Next pairs
+The host's Waiting list and the QR page show the next matches as pairs (e.g. "NEXT: Ann & Bo vs Cy & Di", then
+the following matches). They come from the same matchmaker as the courts, and a free court receives exactly the
+previewed pairs as long as the waiting list hasn't changed. Later matches can still change.
