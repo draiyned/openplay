@@ -110,14 +110,18 @@
     }
     if (s.onBreak && s.onBreak.length) h += '<div class="sub" style="margin-top:8px">On break: ' + esc(s.onBreak.join(", ")) + "</div>";
 
-    h += "<h2>Leaderboard</h2>";
+    h += "<h2>Leaderboard · most wins</h2>";
     if (!s.standings || !s.standings.length || !s.standings.some(function (r) { return r.mp > 0; })) h += '<div class="empty">Standings appear after the first match.</div>';
     else {
-      h += '<div class="scroll"><table><thead><tr><th>#</th><th>Player</th><th>W-L</th><th>MP</th><th>+/-</th><th>Rating</th></tr></thead><tbody>' +
-        s.standings.map(function (r, i) {
-          var d = Number(r.d) || 0;
-          return "<tr><td>" + (i + 1) + "</td><td>" + esc(r.n) + "</td><td>" + esc(r.w) + "-" + esc(r.l) + "</td><td>" + esc(r.mp) +
-            '</td><td class="' + (d > 0 ? "pos" : d < 0 ? "neg" : "") + '">' + (d > 0 ? "+" : "") + d + "</td><td>" + (Number(r.r) || 0).toFixed(2) + "</td></tr>";
+      var rows = s.standings.slice().sort(function (x, y) {
+        return (y.w - x.w) || (x.l - y.l) || String(x.n).localeCompare(String(y.n));
+      });
+      var rank = 0, prev = null;
+      h += '<div class="scroll"><table><thead><tr><th>#</th><th>Player</th><th>Wins</th><th>Losses</th><th>MP</th></tr></thead><tbody>' +
+        rows.map(function (r, i) {
+          var key = r.w + "-" + r.l;
+          if (key !== prev) { rank = i + 1; prev = key; }
+          return "<tr><td>" + rank + "</td><td>" + esc(r.n) + "</td><td>" + esc(r.w) + "</td><td>" + esc(r.l) + "</td><td>" + esc(r.mp) + "</td></tr>";
         }).join("") + "</tbody></table></div>";
     }
 

@@ -1861,9 +1861,12 @@
       }),
       queue: waiting.map(function (p) { return p.name; }),
       onBreak: state.players.filter(function (p) { return state.benched[p.id]; }).map(function (p) { return p.name; }),
-      standings: computeStandings().slice(0, 60).map(function (s) {
-        return { n: s.name, w: s.wins, l: s.losses, mp: s.matches, d: s.diff, r: s.rating };
-      }),
+      // shared view ranks by wins (fewest losses breaks ties); no points or ratings are shared
+      standings: computeStandings().map(function (s) {
+        return { n: s.name, w: s.wins, l: s.losses, mp: s.matches };
+      }).sort(function (a, b) {
+        return (b.w - a.w) || (a.l - b.l) || a.n.localeCompare(b.n);
+      }).slice(0, 60),
       history: state.history.slice(0, 40).map(function (h) {
         return { c: h.court + 1, m: h.matchNum, a: namesOf(h.teamA), b: namesOf(h.teamB), sa: h.scoreA, sb: h.scoreB, w: h.winner };
       }),

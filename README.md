@@ -122,3 +122,6 @@ after the last update. The QR code is generated in `qr.js` with no outside servi
 The host's Waiting list and the QR page show the next matches as pairs (e.g. "NEXT: Ann & Bo vs Cy & Di", then
 the following matches). They come from the same matchmaker as the courts, and a free court receives exactly the
 previewed pairs as long as the waiting list hasn't changed. Later matches can still change.
+
+The shared live view ranks players by wins (fewest losses breaks ties; equal records share a rank) and does not
+show point differences or ratings. Match scores still appear under Recent results.
