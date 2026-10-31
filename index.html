@@ -85,7 +85,7 @@
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({ action: "status", email: email, device: getDeviceId() })
     }).then(function (r) { return r.json(); }).then(function (res) {
-      if (res && res.allowed === false) kickOut("Your access was put on hold. Contact the organizer.");
+      if (res && res.allowed === false) kickOut("Your access was put on hold. Contact the developer.");
     }).catch(function () {
       // offline or server hiccup: don't kick anyone out because of that
     });
@@ -223,7 +223,7 @@
         }
         unlock();
       } else if (res && res.reason === "blocked") {
-        showError("Access is on hold for this email or device. Contact the organizer.");
+        showError("Access is on hold for this email or device. Contact the developer.");
       } else if (res && res.reason === "unverified") {
         googleCredential = "";
         document.getElementById("gsi-status").textContent = "";
