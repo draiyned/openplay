@@ -1635,3 +1635,5 @@ button, input {
 .next-line { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 8px; font-size: 0.9rem; color: #F5EFD9; }
 .next-line b { color: #e9dfae; letter-spacing: 0.06em; }
 .next-line .vs { opacity: 0.6; font-size: 0.8em; }
+
+.timer-note { font-size: 0.72rem; opacity: 0.55; margin-left: 2px; }

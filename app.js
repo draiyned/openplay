@@ -26,8 +26,7 @@
     sessionStarted: false,
     courts: [],
     matchCounts: [],
-    courtTimers: [],
-    retiredMs: 0,
+    matchStart: [],
     gamesPlayed: {},
     benchOrder: {},
     turnCounter: 0,
@@ -163,27 +162,27 @@
     // just because their overall repeat count still ties for lowest.
     var recentPenalty = 0;
     if (recent) {
-      if (recent.indexOf(k1) !== -1) recentPenalty += 50;
-      if (recent.indexOf(k2) !== -1) recentPenalty += 50;
+      if (recent.indexOf(k1) !== -1) recentPenalty += 100;
+      if (recent.indexOf(k2) !== -1) recentPenalty += 100;
     }
     // Same idea for opponents: facing the same person again a match or
     // two later gets a penalty even if their lifetime opponent count
     // still ties for lowest.
     if (recentOpp) {
       crossKeys.forEach(function (k) {
-        if (recentOpp.indexOf(k) !== -1) recentPenalty += 20;
+        if (recentOpp.indexOf(k) !== -1) recentPenalty += 40;
       });
     }
     // Skill balance: prefer splits where each team's combined skill is
     // close, so a team of two 5s doesn't face two total beginners.
     var skillA = (teamA[0].skill || 0) + (teamA[1].skill || 0);
     var skillB = (teamB[0].skill || 0) + (teamB[1].skill || 0);
-    var skillPenalty = Math.abs(skillA - skillB) * 3;
+    var skillPenalty = Math.abs(skillA - skillB) * 2;
     // Repeating a partner matters far more than repeating an opponent —
     // with a big player pool, facing someone across the net again and
     // again is the more visible/annoying repeat, so it still counts,
     // just less than an outright repeat partnership.
-    return partnerScore * 4 + opponentScore + recentPenalty + skillPenalty;
+    return partnerScore * 60 + opponentScore * 30 + recentPenalty + skillPenalty;
   }
 
   function bestTeamSplit(four, partnerHistory, opponentHistory, recent, recentOpp) {
@@ -249,6 +248,15 @@
     return best;
   }
 
+  // Picks the next four from the waiting list. Fairness comes first (fewest games, then longest
+  // wait), but within a small window of the queue it picks the group that would give the
+  // freshest matchups: partners and opponents who haven't met yet. A swap away from strict queue
+  // order only happens when it avoids real repeats, and never reaches beyond one extra game.
+  var FAIR_GAME_COST = 30;  // cost per extra game played versus the least-played waiting player
+  var FAIR_QUEUE_COST = 4; // cost per place further back in the queue
+  var FAIR_SLACK = 1;      // most extra games a player may have and still be considered
+  var FAIR_WINDOW = 10;     // how far down the queue to look
+
   function pickFour(waitingPool, gp, bo, ph, oh, recent, recentOpp) {
     var sorted = shuffle(waitingPool).sort(function (a, b) {
       var diff = (gp[a.id] || 0) - (gp[b.id] || 0);
@@ -258,30 +266,31 @@
 
     if (sorted.length <= 4 || !ph) return sorted.slice(0, 4);
 
-    // Players with strictly fewer games played are owed a spot and stay
-    // locked in. Among players tied on games played for the remaining
-    // slots, prefer whichever combination can be split into teams with
-    // the fewest repeated partnerships (and, secondarily, the fewest
-    // repeated opponents) — a group isn't penalized just because two of
-    // them faced each other as opponents once before.
-    var cutoffGp = gp[sorted[3].id] || 0;
-    var locked = sorted.filter(function (p) { return (gp[p.id] || 0) < cutoffGp; });
-    var tied = sorted.filter(function (p) { return (gp[p.id] || 0) === cutoffGp; });
+    var minGp = gp[sorted[0].id] || 0;
+    var cutoffGp = (gp[sorted[3].id] || 0) + FAIR_SLACK;
+    var candidates = [];
+    sorted.forEach(function (p, i) {
+      if (i < FAIR_WINDOW && (gp[p.id] || 0) <= cutoffGp) candidates.push({ p: p, pos: i });
+    });
+    if (candidates.length <= 4) return candidates.map(function (c) { return c.p; });
+
+    // anyone with strictly fewer games than the 4th-ranked player is owed a spot
+    var fourthGp = gp[sorted[3].id] || 0;
+    var locked = candidates.filter(function (c) { return (gp[c.p.id] || 0) < fourthGp; });
+    var rest = candidates.filter(function (c) { return (gp[c.p.id] || 0) >= fourthGp; });
     var slotsLeft = 4 - locked.length;
 
-    if (tied.length <= slotsLeft) return locked.concat(tied).slice(0, 4);
-
-    var candidates = tied.slice(0, 16); // bound the combination search
-    var bestCombo = candidates.slice(0, slotsLeft);
-    var bestScore = Infinity;
-    combosOf(candidates, slotsLeft).forEach(function (combo) {
-      var score = bestSplitScore(locked.concat(combo), ph, oh, recent, recentOpp);
-      if (score < bestScore) {
-        bestScore = score;
-        bestCombo = combo;
-      }
+    var best = null, bestScore = Infinity;
+    combosOf(rest, slotsLeft).forEach(function (combo) {
+      var group = locked.concat(combo);
+      var four = group.map(function (c) { return c.p; });
+      var score = bestSplitScore(four, ph, oh, recent, recentOpp);
+      group.forEach(function (c) {
+        score += ((gp[c.p.id] || 0) - minGp) * FAIR_GAME_COST + c.pos * FAIR_QUEUE_COST;
+      });
+      if (score < bestScore) { bestScore = score; best = four; }
     });
-    return locked.concat(bestCombo);
+    return best || sorted.slice(0, 4);
   }
 
   function buildUnits(playerList) {
@@ -475,6 +484,9 @@
     if (entry.archiveId) removeArchive(entry.archiveId);
     Object.keys(entry.snap).forEach(function (k) { state[k] = entry.snap[k]; });
     relinkPlayers();
+    if (entry.matchStart && state.courts[entry.matchStart.ci]) {
+      state.matchStart[entry.matchStart.ci] = entry.matchStart.start;
+    }
     state.confirmState = {};
     state.scoreDraft = {};
     state.pendingLockId = null;
@@ -489,16 +501,9 @@
     if (top && top.id === id) undo();
   }
 
-  /* ---------- court rental timers ---------- */
-  // One timer per court, running from when the court joins the session.
-  // Pausing (rain, breaks) stops the clock. Time from removed courts is kept
-  // in retiredMs so the session total stays correct.
-  function newTimer() { return { acc: 0, since: Date.now() }; }
-
-  function timerMs(t) {
-    return t ? t.acc + (t.since ? Date.now() - t.since : 0) : 0;
-  }
-
+  /* ---------- match timers ---------- */
+  // Each court's clock measures the match being played on it: it starts when the match is
+  // generated, stops when the score is saved, and starts again from zero for the next match.
   function pad2(n) { return (n < 10 ? "0" : "") + n; }
 
   function fmtDuration(ms) {
@@ -506,65 +511,41 @@
     return pad2(Math.floor(s / 3600)) + ":" + pad2(Math.floor((s % 3600) / 60)) + ":" + pad2(s % 60);
   }
 
-  function totalCourtMs() {
-    return (state.retiredMs || 0) + state.courtTimers.reduce(function (a, t) { return a + timerMs(t); }, 0);
+  // mm:ss for a match, h:mm:ss once it passes an hour
+  function fmtClock(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600);
+    return (h > 0 ? h + ":" : "") + pad2(Math.floor((s % 3600) / 60)) + ":" + pad2(s % 60);
   }
 
-  function fmtCourtHours(ms) {
-    return (ms / 3600000).toFixed(2) + " court-hrs";
+  function matchElapsed(ci) {
+    var t = state.matchStart[ci];
+    return t ? Math.max(0, Date.now() - t) : 0;
   }
 
-  // Keep timers lined up with courts after start, add/remove court, undo, reload.
-  function reconcileTimers() {
-    if (!state.sessionStarted) {
-      state.courtTimers = [];
-      state.retiredMs = 0;
-      return;
-    }
-    if (!Array.isArray(state.courtTimers)) state.courtTimers = [];
-    while (state.courtTimers.length < state.courts.length) state.courtTimers.push(newTimer());
-    while (state.courtTimers.length > state.courts.length) {
-      state.retiredMs = (state.retiredMs || 0) + timerMs(state.courtTimers.pop());
-    }
-  }
-
-  function toggleCourtTimer(ci) {
-    var t = state.courtTimers[ci];
-    if (!t) return;
-    if (t.since) {
-      t.acc += Date.now() - t.since;
-      t.since = null;
-    } else {
-      t.since = Date.now();
-    }
-    render();
+  // Keep one start time per court: set while a match is on it, empty otherwise.
+  function reconcileMatchTimers() {
+    if (!state.sessionStarted) { state.matchStart = []; return; }
+    if (!Array.isArray(state.matchStart)) state.matchStart = [];
+    var now = Date.now();
+    state.matchStart = state.courts.map(function (c, i) {
+      return c ? (state.matchStart[i] || now) : null;
+    });
   }
 
   function updateTimers() {
     if (!state.sessionStarted) return;
-    var els = document.querySelectorAll("[data-court-timer]");
+    var els = document.querySelectorAll("[data-match-timer]");
     for (var i = 0; i < els.length; i++) {
-      els[i].textContent = fmtDuration(timerMs(state.courtTimers[Number(els[i].getAttribute("data-court-timer"))]));
+      els[i].textContent = fmtClock(matchElapsed(Number(els[i].getAttribute("data-match-timer"))));
     }
-    var total = totalCourtMs();
-    var tEl = document.querySelector("[data-total-timer]");
-    if (tEl) tEl.textContent = fmtDuration(total);
-    var hEl = document.querySelector("[data-total-hours]");
-    if (hEl) hEl.textContent = fmtCourtHours(total);
   }
 
-  function buildCourtTimer(ci) {
-    var t = state.courtTimers[ci];
-    var paused = t && !t.since;
+  function buildMatchTimer(ci) {
     return (
-      '<div class="court-timer' + (paused ? " paused" : "") + '">' +
+      '<div class="court-timer">' +
         ICONS.clock(13) +
-        '<span class="timer-clock" data-court-timer="' + ci + '">' + fmtDuration(timerMs(t)) + '</span>' +
-        '<button type="button" class="timer-btn" data-action="toggle-court-timer" data-ci="' + ci + '" ' +
-          'aria-label="' + (paused ? "Resume court timer" : "Pause court timer") + '" ' +
-          'title="' + (paused ? "Resume court timer" : "Pause court timer") + '">' +
-          (paused ? ICONS.play(12) : ICONS.pause(12)) +
-        '</button>' +
+        '<span class="timer-clock" data-match-timer="' + ci + '">' + fmtClock(matchElapsed(ci)) + '</span>' +
+        '<span class="timer-note">match time</span>' +
       '</div>'
     );
   }
@@ -791,6 +772,8 @@
     }
 
     var undoId = pushUndo("Finish match on court " + (ci + 1));
+    var durMs = matchElapsed(ci);
+    undoStack[undoStack.length - 1].matchStart = { ci: ci, start: state.matchStart[ci] || null };
 
     var counter = state.turnCounter;
     finished.teamA.concat(finished.teamB).forEach(function (p) {
@@ -816,9 +799,11 @@
       scoreA: scoreA,
       scoreB: scoreB,
       winner: scoreA > scoreB ? "A" : "B",
+      durMs: durMs,
     });
 
     state.courts[ci] = null;
+    state.matchStart[ci] = null;
     state.turnCounter = counter;
     state.error = "";
     delete state.scoreDraft[ci];
@@ -868,6 +853,7 @@
     recentOpp = crossKeys.concat(recentOpp).slice(0, RECENT_OPP_LIMIT);
 
     state.courts[ci] = { teamA: split.teamA, teamB: split.teamB };
+    state.matchStart[ci] = Date.now();
     state.matchCounts[ci] = (state.matchCounts[ci] || 0) + 1;
     state.gamesPlayed = gp;
     state.partnerHistory = ph;
@@ -1253,7 +1239,7 @@
           '<span class="court-label">Court ' + (ci + 1) + '</span>' +
           '<span class="match-num">match ' + state.matchCounts[ci] + '</span>' +
         '</div>' +
-        buildCourtTimer(ci) +
+        buildMatchTimer(ci) +
         '<div class="team-name">' + teamNames(court.teamA) + '</div>' +
         '<div class="vs">vs</div>' +
         '<div class="team-name">' + teamNames(court.teamB) + '</div>'
@@ -1315,7 +1301,6 @@
       inner += (
         '<div>' +
           '<div class="court-head"><span class="court-label">Court ' + (ci + 1) + '</span></div>' +
-          buildCourtTimer(ci) +
           '<div class="confirm-text">Ready for the next match.</div>' +
           '<button type="button" class="btn-small" data-action="generate-next" data-ci="' + ci + '">' +
             ICONS.shuffle(13) + ' Generate next match</button>' +
@@ -1324,7 +1309,6 @@
     } else {
       inner += (
         '<div class="court-head"><span class="court-label">Court ' + (ci + 1) + '</span></div>' +
-        buildCourtTimer(ci) +
         '<div class="court-idle">' + ICONS.clock(13) + ' Waiting for players</div>'
       );
     }
@@ -1335,15 +1319,7 @@
   function buildCourtsGrid() {
     var occupied = occupiedIds(state.courts);
     var freeCount = state.players.filter(function (p) { return !occupied[p.id] && !state.benched[p.id]; }).length;
-    var total = totalCourtMs();
-    var summary = (
-      '<div class="court-time-summary">' +
-        '<span>Rented court time</span>' +
-        '<b data-total-timer>' + fmtDuration(total) + '</b>' +
-        '<span class="muted" data-total-hours>' + fmtCourtHours(total) + '</span>' +
-      '</div>'
-    );
-    return summary + '<div class="courts-grid">' + state.courts.map(function (court, ci) {
+    return '<div class="courts-grid">' + state.courts.map(function (court, ci) {
       return buildCourtCard(court, ci, freeCount);
     }).join("") + '</div>';
   }
@@ -1469,7 +1445,7 @@
         '<div class="net-line"></div>' +
         '<div class="history-head">' +
           '<span class="history-court-label">Court ' + (h.court + 1) + '</span>' +
-          '<span class="history-match-num">' + ICONS.check(11) + ' match ' + h.matchNum + '</span>' +
+          '<span class="history-match-num">' + ICONS.check(11) + ' match ' + h.matchNum + (h.durMs ? ' · ' + fmtClock(h.durMs) : '') + '</span>' +
         '</div>' +
         '<div class="history-team-row' + (winA ? " winner" : "") + '">' +
           '<span class="history-team-name">' + (winA ? ICONS.trophy(12, "color:" + BALL_COLOR) : "") + teamNames(h.teamA) + '</span>' +
@@ -1624,14 +1600,14 @@
       return { name: s.name, wins: s.wins, losses: s.losses, matches: s.matches, pf: s.pf, pa: s.pa, diff: s.diff, rating: s.rating };
     });
     var matches = state.history.slice().reverse().map(function (h) {
-      return { court: h.court + 1, num: h.matchNum, a: namesOf(h.teamA), b: namesOf(h.teamB), sa: h.scoreA, sb: h.scoreB, w: h.winner };
+      return { court: h.court + 1, num: h.matchNum, a: namesOf(h.teamA), b: namesOf(h.teamB), sa: h.scoreA, sb: h.scoreB, w: h.winner, dur: h.durMs || 0 };
     });
     var entry = {
       id: "s-" + Date.now(),
       startedAt: state.sessionStartedAt || null,
       endedAt: Date.now(),
       courts: state.numCourts,
-      courtMs: totalCourtMs(),
+      durMs: state.sessionStartedAt ? Date.now() - state.sessionStartedAt : 0,
       players: state.players.length,
       standings: standings,
       matches: matches,
@@ -1656,7 +1632,7 @@
       '<div class="past-card">' +
         '<div class="past-head">' +
           '<div><div class="past-title">' + escapeHtml(fmtWhen(e.endedAt)) + '</div>' +
-          '<div class="past-meta">' + e.matches.length + ' matches · ' + e.players + ' players · ' + e.courts + ' courts · ' + fmtDuration(e.courtMs || 0) + ' court time</div></div>' +
+          '<div class="past-meta">' + e.matches.length + ' matches · ' + e.players + ' players · ' + e.courts + ' courts' + (e.durMs ? ' · session ' + fmtClock(e.durMs) : '') + '</div></div>' +
         '</div>' +
         '<div class="btn-row">' +
           '<button type="button" class="btn-ghost-small" data-action="view-past" data-id="' + escapeHtml(e.id) + '">' + (open ? "Hide" : "View") + '</button>' +
@@ -1672,7 +1648,7 @@
         }).join("") +
       '</div><div class="past-matches">' +
         e.matches.map(function (m) {
-          return '<div class="past-match"><span class="past-match-court">C' + m.court + '</span> ' +
+          return '<div class="past-match"><span class="past-match-court">C' + m.court + (m.dur ? ' · ' + fmtClock(m.dur) : '') + '</span> ' +
             '<span' + (m.w === "A" ? ' class="past-win"' : "") + '>' + escapeHtml(m.a.join(" & ")) + ' ' + m.sa + '</span> – ' +
             '<span' + (m.w === "B" ? ' class="past-win"' : "") + '>' + m.sb + ' ' + escapeHtml(m.b.join(" & ")) + '</span></div>';
         }).join("") +
@@ -1699,9 +1675,9 @@
     e.standings.forEach(function (s, i) {
       rows.push([i + 1, s.name, s.wins, s.losses, s.matches, s.pf, s.pa, s.diff, s.rating]);
     });
-    rows.push([], ["Matches"], ["Court", "Match #", "Team A", "Team B", "Score A", "Score B", "Winner"]);
+    rows.push([], ["Matches"], ["Court", "Match #", "Team A", "Team B", "Score A", "Score B", "Winner", "Match time"]);
     e.matches.forEach(function (m) {
-      rows.push([m.court, m.num, m.a.join(" & "), m.b.join(" & "), m.sa, m.sb, (m.w === "A" ? m.a : m.b).join(" & ")]);
+      rows.push([m.court, m.num, m.a.join(" & "), m.b.join(" & "), m.sa, m.sb, (m.w === "A" ? m.a : m.b).join(" & "), m.dur ? fmtClock(m.dur) : ""]);
     });
     var csv = rows.map(function (r) { return r.map(csvEscape).join(","); }).join("\r\n");
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -1768,11 +1744,11 @@
     var prev = {};
     if (previewCache) previewCache.matches.forEach(function (m) { prev[matchKey(m)] = m; });
 
-    // Keep the same NEXT match while those four are still the first four in line (e.g. when a
-    // match finishes and its players join the back of the queue), so it doesn't flip around.
+    // The earlier NEXT match can be kept (so it doesn't flip around) only while the
+    // matchmaker can't find anything better for the current waiting list.
     var lp = JSON.stringify(state.lockedPairs), keep = null, byOrder = {};
     order.forEach(function (p) { byOrder[p.id] = p; });
-    if (previewCache && previewCache.lp === lp && previewCache.matches.length) {
+    if (previewCache && previewCache.lp === lp && previewCache.matches.length && state.lockedPairs.length === 0) {
       var m0 = previewCache.matches[0], ids0 = m0.teamA.concat(m0.teamB), set0 = {};
       ids0.forEach(function (id) { set0[id] = 1; });
       if (ids0.length === 4 && ids0.every(function (id) { return byOrder[id]; })) {
@@ -1788,12 +1764,14 @@
     var recent = state.recentPartners.slice(), recentOpp = state.recentOpponents.slice();
     for (var n = 0; n < 3 && pool.length >= 4; n++) {
       var res;
-      if (n === 0 && keep) {
+      try { res = resolveMatch(pool, gp, state.benchOrder, ph, oh, recent, recentOpp); } catch (e) { break; }
+      if (n === 0 && keep && res && res.four && res.four.length === 4) {
         var kTA = keep.teamA.map(function (id) { return byOrder[id]; });
         var kTB = keep.teamB.map(function (id) { return byOrder[id]; });
-        res = { four: kTA.concat(kTB), split: { teamA: kTA, teamB: kTB } };
-      } else {
-        try { res = resolveMatch(pool, gp, state.benchOrder, ph, oh, recent, recentOpp); } catch (e) { break; }
+        var sOld = splitScore(kTA, kTB, ph, oh, recent, recentOpp);
+        var sNew = splitScore(res.split.teamA, res.split.teamB, ph, oh, recent, recentOpp);
+        // switch only if the fresh pick is strictly better (fewer repeat partners / opponents)
+        if (sOld <= sNew) res = { four: kTA.concat(kTB), split: { teamA: kTA, teamB: kTB } };
       }
       if (!res || !res.four || res.four.length !== 4) break;
       var m = {
@@ -1857,7 +1835,7 @@
       t: Date.now(),
       ended: !!ended,
       courts: state.courts.map(function (c, i) {
-        return c ? { n: i + 1, m: state.matchCounts[i], a: namesOf(c.teamA), b: namesOf(c.teamB) } : { n: i + 1, free: true };
+        return c ? { n: i + 1, m: state.matchCounts[i], a: namesOf(c.teamA), b: namesOf(c.teamB), el: matchElapsed(i) } : { n: i + 1, free: true };
       }),
       queue: waiting.map(function (p) { return p.name; }),
       onBreak: state.players.filter(function (p) { return state.benched[p.id]; }).map(function (p) { return p.name; }),
@@ -1868,7 +1846,7 @@
         return (b.w - a.w) || (a.l - b.l) || a.n.localeCompare(b.n);
       }).slice(0, 60),
       history: state.history.slice(0, 40).map(function (h) {
-        return { c: h.court + 1, m: h.matchNum, a: namesOf(h.teamA), b: namesOf(h.teamB), sa: h.scoreA, sb: h.scoreB, w: h.winner };
+        return { c: h.court + 1, m: h.matchNum, a: namesOf(h.teamA), b: namesOf(h.teamB), sa: h.scoreA, sb: h.scoreB, w: h.winner, du: h.durMs || 0 };
       }),
     };
   }
@@ -2045,8 +2023,7 @@
       lockedPairs: state.lockedPairs,
       benched: state.benched,
       history: state.history,
-      courtTimers: state.courtTimers,
-      retiredMs: state.retiredMs,
+      matchStart: state.matchStart,
       sessionStartedAt: state.sessionStartedAt,
       live: state.live,
     };
@@ -2146,7 +2123,7 @@
   }
 
   function render() {
-    reconcileTimers();
+    reconcileMatchTimers();
     captureFocus();
     root.innerHTML = buildHTML();
     restoreFocus();
@@ -2180,7 +2157,6 @@
     else if (action === "reroll") rerollCourt(ci);
     else if (action === "download-history") downloadHistory();
     else if (action === "undo") undo();
-    else if (action === "toggle-court-timer") toggleCourtTimer(ci);
     else if (action === "toggle-live-panel") { state.liveOpen = !state.liveOpen; render(); }
     else if (action === "start-live") startLive();
     else if (action === "stop-live") stopLive();

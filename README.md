@@ -79,10 +79,10 @@ sign-in with Google before logging the email, so nobody can type someone else's 
 
 Google sign-in does not work when the page is opened as a local file; use the real site address.
 
-## Court timers
-Every court shows a rental clock that starts when the session starts (or when a court is added) and
-can be paused/resumed. The total across courts, in `HH:MM:SS` and court-hours, sits above the courts.
-Time from a removed court stays in the total. Ending the session clears the timers.
+## Match timers
+Each court shows the elapsed time of the match being played on it. The clock starts when the match is generated,
+stops when the score is saved (the duration is stored with the result, shown in the match history, the CSV and the
+live page) and starts again from zero for the next match. A reroll restarts it; a page refresh does not reset it.
 
 ## Admin page (/admin/)
 `admin/index.html` lists everyone who signed in and lets you block or unblock them, so you never
@@ -125,3 +125,9 @@ previewed pairs as long as the waiting list hasn't changed. Later matches can st
 
 The shared live view ranks players by wins (fewest losses breaks ties; equal records share a rank) and does not
 show point differences or ratings. Match scores still appear under Recent results.
+
+## Pairing
+The matchmaker tracks every partnership and every opposing matchup in the session. Fairness still comes first
+(fewest games, then longest wait), but within the first few places of the queue it picks the group that gives the
+freshest matchups, and strongly avoids repeating a partner or an opponent. Repeats still happen once everyone has
+already met everyone (e.g. 12 players over many matches), because there is nothing new left.
